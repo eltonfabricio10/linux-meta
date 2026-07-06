@@ -1,0 +1,809 @@
+---
+import Base from '~/layouts/Base.astro';
+import EspecimenCard from '~/components/EspecimenCard.astro';
+import EditOverlay from '~/components/EditOverlay.astro';
+import RuleDivider from '~/components/layout/RuleDivider.astro';
+import SpecimenSpotlight from '~/components/home/SpecimenSpotlight.astro';
+import DoorwayCard from '~/components/home/DoorwayCard.astro';
+import LawBand from '~/components/home/LawBand.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { getSiteStats } from '~/lib/stats';
+import { getCategoryCounts, getCategoryLabel } from '~/lib/categories';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+const stats = await getSiteStats();
+const fmt = new Intl.NumberFormat(isPt ? 'pt-BR' : 'en-US');
+const totalRatings = stats.ratings.imported + stats.ratings.ai + stats.ratings.human;
+const totalTrPkgs = stats.translations.packagesWithImported + stats.translations.packagesWithAi + stats.translations.packagesWithHuman;
+const totalTrRows = stats.translations.rowsImported + stats.translations.rowsAi + stats.translations.rowsHuman;
+
+/* DB translations use 'pt-br'; web locale is 'pt'. Prefer the localized row, fall back to en. */
+const trPrimary = isPt ? 'pt-br' : 'en';
+
+/* ── Hero specimens (real catalog rows) ── */
+const demoSlugs = ['gcompris', 'gimp', 'firefox', 'steam'];
+const suggestSlugs = ['firefox', 'gimp', 'krita', 'gcompris', 'vlc'];
+const demoRows = await db.execute<{
+  id: number; canonical_slug: string; name: string;
+  age_min: number | null; dominant_source: string | null; summary: string | null;
+}>(sql`
+  WITH pkg AS (
+    SELECT DISTINCT ON (COALESCE(canonical_slug, slug))
+      id, COALESCE(canonical_slug, slug) AS canonical_slug, name
+    FROM package
+    WHERE COALESCE(canonical_slug, slug) IN (${sql.join(demoSlugs.map((s) => sql`${s}`), sql`, `)})
+    ORDER BY COALESCE(canonical_slug, slug),
+      CASE source WHEN 'flathub' THEN 4 WHEN 'manjaro' THEN 3 WHEN 'aur' THEN 2 ELSE 0 END DESC
+  )
+  SELECT p.id, p.canonical_slug, p.name, rc.age_min, rc.dominant_source,
+    COALESCE(
+      (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = ${trPrimary} LIMIT 1),
+      (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = 'en' LIMIT 1)
+    ) AS summary
+  FROM pkg p
+  LEFT JOIN rating_current rc ON rc.package_id = p.id
+`);
+const demo = demoSlugs
+  .map((s) => demoRows.find((r) => r.canonical_slug === s))
+  .filter((r): r is (typeof demoRows)[number] => r !== undefined);
+
+/* ── §02 spotlight: one real entry showing the differentiators ── */
+const spotlightSlugs = ['gcompris', 'firefox', 'gimp'];
+const spotRows = await db.execute<{
+  id: number; canonical_slug: string; name: string;
+  age_min: number | null; dominant_source: string | null; oars: Record<string, string> | null;
+  summary: string | null; plain_explanation: string | null;
+  translated_by: string | null; status: string | null; updated_at: string | null;
+}>(sql`
+  WITH pkg AS (
+    SELECT DISTINCT ON (COALESCE(canonical_slug, slug))
+      id, COALESCE(canonical_slug, slug) AS canonical_slug, name
+    FROM package
+    WHERE COALESCE(canonical_slug, slug) IN (${sql.join(spotlightSlugs.map((s) => sql`${s}`), sql`, `)})
+    ORDER BY COALESCE(canonical_slug, slug),
+      CASE source WHEN 'flathub' THEN 4 WHEN 'manjaro' THEN 3 WHEN 'aur' THEN 2 ELSE 0 END DESC
+  )
+  SELECT p.id, p.canonical_slug, p.name,
+    rc.age_min, rc.dominant_source, rc.oars,
+    tr.summary, tr.plain_explanation, tr.translated_by, tr.status, tr.updated_at
+  FROM pkg p
+  LEFT JOIN rating_current rc ON rc.package_id = p.id
+  LEFT JOIN LATERAL (
+    SELECT summary, plain_explanation, translated_by, status, updated_at
+    FROM package_translation t
+    WHERE t.package_id = p.id AND t.locale IN (${trPrimary}, 'en')
+    ORDER BY CASE WHEN t.locale = ${trPrimary} THEN 0 ELSE 1 END,
+             CASE t.status WHEN 'official' THEN 0 WHEN 'reviewed' THEN 1 ELSE 2 END
+    LIMIT 1
+  ) tr ON true
+`);
+const spotlight = spotlightSlugs
+  .map((s) => spotRows.find((r) => r.canonical_slug === s))
+  .find((r) => r && (r.plain_explanation || r.summary)) ?? null;
+
+/* ── §03 doorways: curated lists with a few live specimens each ── */
+const doorways = [
+  { id: 'kids',     tone: 'forest'     as const, maxAge: 9,  requireRated: true,
+    title: isPt ? 'Para crianças (6–9)' : 'For kids (6–9)',
+    sub:   isPt ? 'Apps educativos com idade verificada.' : 'Educational apps with a checked age.',
+    slugs: ['gcompris', 'tuxpaint', 'ktouch', 'kanagram', 'tuxmath', 'gbrainy'] },
+  { id: 'school',   tone: 'amber'      as const, maxAge: 14, requireRated: false,
+    title: isPt ? 'Para escolas' : 'For schools',
+    sub:   isPt ? 'Ciência, matemática e produtividade.' : 'Science, maths and productivity.',
+    slugs: ['geogebra', 'stellarium', 'kalzium', 'libreoffice', 'kgeography', 'marble'] },
+  { id: 'creative', tone: 'terracotta' as const, maxAge: 99, requireRated: false,
+    title: isPt ? 'Criação e mídia' : 'Creative & media',
+    sub:   isPt ? 'Imagem, áudio e vídeo livres.' : 'Free image, audio and video.',
+    slugs: ['blender', 'krita', 'gimp', 'kdenlive', 'obs-studio', 'audacity'] },
+  { id: 'foss',     tone: 'slate'      as const, maxAge: 99, requireRated: false,
+    title: isPt ? 'Alternativas livres' : 'Free alternatives',
+    sub:   isPt ? 'Trocas abertas para apps proprietários.' : 'Open swaps for proprietary apps.',
+    slugs: ['libreoffice', 'thunderbird', 'inkscape', 'gimp', 'darktable', 'audacity'] },
+];
+const doorwaySlugs = [...new Set(doorways.flatMap((d) => d.slugs))];
+const doorwayRows = await db.execute<{
+  canonical_slug: string; name: string; age_min: number | null;
+}>(sql`
+  WITH pkg AS (
+    SELECT DISTINCT ON (COALESCE(canonical_slug, slug))
+      id, COALESCE(canonical_slug, slug) AS canonical_slug, name
+    FROM package
+    WHERE COALESCE(canonical_slug, slug) IN (${sql.join(doorwaySlugs.map((s) => sql`${s}`), sql`, `)})
+    ORDER BY COALESCE(canonical_slug, slug),
+      CASE source WHEN 'flathub' THEN 4 WHEN 'manjaro' THEN 3 WHEN 'aur' THEN 2 WHEN 'debian' THEN 1 ELSE 0 END DESC,
+      popularity DESC
+  )
+  SELECT p.canonical_slug, p.name, rc.age_min
+  FROM pkg p
+  LEFT JOIN rating_current rc ON rc.package_id = p.id
+`);
+const doorwayByCanonical = new Map(doorwayRows.map((r) => [r.canonical_slug, r]));
+const doorwayCards = doorways.map((d) => ({
+  ...d,
+  items: d.slugs
+    .map((s) => doorwayByCanonical.get(s))
+    .filter((r): r is (typeof doorwayRows)[number] => {
+      if (!r) return false;
+      if (r.age_min == null) return !d.requireRated;
+      return r.age_min <= d.maxAge;
+    })
+    .map((r) => ({ name: r.name, slug: r.canonical_slug, ageMin: r.age_min })),
+})).filter((d) => d.items.length > 0);
+
+/* ── §03 category index: top categories by package count ── */
+const catCounts = await getCategoryCounts();
+const catTotals = new Map<string, number>();
+for (const c of catCounts) catTotals.set(c.category, (catTotals.get(c.category) ?? 0) + c.count);
+const topCategories = [...catTotals.entries()]
+  .filter(([slug]) => slug !== 'other')
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 8)
+  .map(([slug, count]) => ({ slug, count, label: getCategoryLabel(slug, locale) }));
+---
+
+<Base
+  title={isPt
+    ? 'linux-meta · entenda qualquer app Linux antes de instalar'
+    : 'linux-meta · understand any Linux app before you install'}
+  description={isPt
+    ? 'Busque entre milhares de apps Linux com descrição em linguagem simples, idade recomendada e a origem de cada dado. Dataset aberto para famílias, escolas, distribuições e pesquisa.'
+    : 'Search thousands of Linux apps with plain-language descriptions, a recommended age and the origin of every fact. An open dataset for families, schools, distros and research.'}
+>
+  {/* ============ §01 HERO ============ */}
+  <section class="hero">
+    <div class="container-page hero-grid">
+      <div class="copy">
+        <p class="kicker">{isPt ? `${fmt.format(stats.packages.canonicals)} apps Linux, explicados` : `${fmt.format(stats.packages.canonicals)} Linux apps, explained`}</p>
+        <h1 class="display">
+          {isPt ? 'Entenda qualquer app Linux antes de instalar.' : 'Understand any Linux app before you install.'}
+        </h1>
+        <p class="lead">
+          {isPt
+            ? 'Busque entre apps do Manjaro, Flathub, AUR e Debian. Cada um explicado em linguagem simples, no seu idioma, com idade recomendada e a origem de cada dado.'
+            : 'Search apps from Manjaro, Flathub, AUR and Debian. Each one explained in plain language, in your language, with a recommended age and the origin of every fact.'}
+        </p>
+        <form class="search" action={localePath(locale, '/browse')} method="get" role="search">
+          <label class="visually-hidden" for="hero-q">{isPt ? 'Buscar programa' : 'Search program'}</label>
+          <input
+            id="hero-q"
+            name="q"
+            type="search"
+            autocomplete="off"
+            placeholder={isPt ? 'Buscar um app: firefox, gimp, gcompris…' : 'Search an app: firefox, gimp, gcompris…'}
+          />
+          <button type="submit" aria-label={isPt ? 'Buscar' : 'Search'}>
+            <span aria-hidden="true">→</span>
+          </button>
+        </form>
+        <div class="hero-aux">
+          <p class="suggest">
+            <span class="suggest-cap">{isPt ? 'comece por' : 'start with'}:</span>
+            {suggestSlugs.map((s, i) => (
+              <>
+                {i > 0 && <span class="dot" aria-hidden="true"> · </span>}
+                <a href={localePath(locale, `/p/${s}`)}>{s}</a>
+              </>
+            ))}
+          </p>
+        </div>
+      </div>
+
+      <aside class="specimens" aria-label={isPt ? 'Exemplos reais do catálogo' : 'Real catalog examples'}>
+        <div class="proof-strip">
+          <span><strong>{fmt.format(stats.packages.canonicals)}</strong>{isPt ? 'apps' : 'apps'}</span>
+          <span><strong>{fmt.format(totalRatings)}</strong>{isPt ? 'classificações' : 'ratings'}</span>
+          <span><strong>{fmt.format(totalTrPkgs)}</strong>{isPt ? 'traduzidos' : 'translated'}</span>
+        </div>
+        <div class="specimen-grid">
+          {demo.map((p) => (
+            <EditOverlay href={localePath(locale, `/admin/packages/${p.id}`)} field={p.name}>
+              <EspecimenCard
+                locale={locale}
+                id={p.id}
+                slug={p.canonical_slug}
+                name={p.name}
+                summary={p.summary}
+                ageMin={p.age_min}
+                source={p.dominant_source}
+              />
+            </EditOverlay>
+          ))}
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  {/* ============ §02 THE ANSWER, SHOWN ONCE ============ */}
+  {spotlight && (
+    <section class="spotlight-sec">
+      <div class="container-page">
+        <header class="sec-head">
+          <p class="section-no">{isPt ? '§ 02 — a resposta, em um exemplo' : '§ 02 — the answer, in one example'}</p>
+          <h2>{isPt ? 'Isto é o que uma ficha do linux-meta responde.' : 'This is what a linux-meta entry answers.'}</h2>
+          <p class="lead">{isPt
+            ? 'O que é, em palavras simples · para qual idade · e de onde veio cada dado. Sem inglês técnico, sem adivinhação.'
+            : 'What it is, in plain words · for which age · and where each fact came from. No technical English, no guessing.'}</p>
+        </header>
+        <SpecimenSpotlight
+          locale={locale}
+          name={spotlight.name}
+          slug={spotlight.canonical_slug}
+          summary={spotlight.summary}
+          plainExplanation={spotlight.plain_explanation}
+          ageMin={spotlight.age_min}
+          oars={spotlight.oars}
+          ratingSource={spotlight.dominant_source}
+          translationSource={spotlight.translated_by}
+          translationStatus={spotlight.status}
+          updatedAt={spotlight.updated_at}
+        />
+      </div>
+    </section>
+  )}
+
+  <RuleDivider tone="forest" variant="wave" />
+
+  {/* ============ §03 DOORWAYS ============ */}
+  <section class="doorways-sec">
+    <div class="container-page">
+      <header class="sec-head">
+        <p class="section-no">{isPt ? '§ 03 — comece por uma necessidade' : '§ 03 — start from a need'}</p>
+        <h2>{isPt ? 'Listas prontas e categorias reais.' : 'Ready-made lists and real categories.'}</h2>
+        <p class="lead">{isPt
+          ? 'Pais escolhem por idade, professores por matéria, criadores por mídia. Ou navegue o catálogo inteiro por categoria.'
+          : 'Parents pick by age, teachers by subject, creators by media. Or browse the whole catalog by category.'}</p>
+      </header>
+
+      <div class="doorways">
+        {doorwayCards.map((d) => (
+          <DoorwayCard
+            locale={locale}
+            title={d.title}
+            sub={d.sub}
+            href={localePath(locale, '/lists')}
+            tone={d.tone}
+            items={d.items}
+          />
+        ))}
+      </div>
+
+      <nav class="cat-index" aria-label={isPt ? 'Categorias' : 'Categories'}>
+        {topCategories.map((c) => (
+          <a class="cat-chip" href={localePath(locale, `/browse?category=${c.slug}`)}>
+            <span class="cat-label">{c.label}</span>
+            <span class="cat-count">{fmt.format(c.count)}</span>
+          </a>
+        ))}
+        <a class="cat-chip cat-all" href={localePath(locale, '/browse')}>
+          {isPt ? 'Ver tudo' : 'Browse all'} →
+        </a>
+      </nav>
+    </div>
+  </section>
+
+  <RuleDivider tone="ink" variant="wave" />
+
+  {/* ============ §04 TRUST / PROVENANCE ============ */}
+  <section class="metrics">
+    <div class="container-page">
+      <header class="sec-head">
+        <p class="section-no">{isPt ? '§ 04 — por que confiar na ficha' : '§ 04 — why you can trust the entry'}</p>
+        <h2>{isPt ? 'Cada dado diz de onde veio.' : 'Every fact says where it came from.'}</h2>
+        <p class="m-note">{isPt
+          ? 'É isso que torna a idade e a descrição confiáveis: nada é apresentado como certo sem origem. Cobertura atual, no aberto.'
+          : 'That is what makes the age and the description trustworthy: nothing is presented as fact without an origin. Current coverage, in the open.'}</p>
+      </header>
+
+      <ul class="prov-legend">
+        <li><i class="bd-imp"></i><strong>{dict.hero.lblImported}</strong> — {isPt ? 'redistribuído do upstream' : 'redistributed from upstream'}</li>
+        <li><i class="bd-ai"></i><strong>{dict.hero.lblAi}</strong> — {isPt ? 'sugerido pelos workers, aguarda revisão' : 'suggested by workers, awaiting review'}</li>
+        <li><i class="bd-hum"></i><strong>{dict.hero.lblHuman}</strong> — {isPt ? 'revisado por colaborador identificado' : 'reviewed by an identified contributor'}</li>
+      </ul>
+
+      <table class="m-table">
+        <thead>
+          <tr>
+            <th scope="col">{isPt ? 'Categoria' : 'Category'}</th>
+            <th scope="col" class="num">{isPt ? 'Total' : 'Total'}</th>
+            <th scope="col">{isPt ? 'Detalhe' : 'Detail'}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">{dict.hero.lblCanonicals}</th>
+            <td class="num">{fmt.format(stats.packages.canonicals)}</td>
+            <td class="detail">{fmt.format(stats.packages.total)} {dict.hero.lblPackages}</td>
+          </tr>
+          <tr>
+            <th scope="row">{dict.hero.lblRatings}</th>
+            <td class="num">{fmt.format(totalRatings)}</td>
+            <td class="detail">
+              <span class="bd"><i class="bd-imp"></i>{fmt.format(stats.ratings.imported)} {dict.hero.lblImported}</span>
+              <span class="bd"><i class="bd-ai"></i>{fmt.format(stats.ratings.ai)} {dict.hero.lblAi}</span>
+              <span class="bd"><i class="bd-hum"></i>{fmt.format(stats.ratings.human)} {dict.hero.lblHuman}</span>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">{dict.hero.lblTranslations}</th>
+            <td class="num">{fmt.format(totalTrPkgs)}</td>
+            <td class="detail">
+              <span class="bd"><i class="bd-imp"></i>{fmt.format(stats.translations.packagesWithImported)} {dict.hero.lblImported}</span>
+              <span class="bd"><i class="bd-ai"></i>{fmt.format(stats.translations.packagesWithAi)} {dict.hero.lblAi}</span>
+              <span class="bd"><i class="bd-hum"></i>{fmt.format(stats.translations.packagesWithHuman)} {dict.hero.lblHuman}</span>
+              <span class="bd-extra">{fmt.format(totalTrRows)} {dict.hero.lblTrRows} · {stats.translations.avgLocalesPerPackage} {dict.hero.lblTrAvg}</span>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">{dict.hero.lblEmbeddings}</th>
+            <td class="num">{fmt.format(stats.embeddings.total)}</td>
+            <td class="detail">{isPt ? 'usados para busca semântica e agrupamento' : 'used for semantic search and grouping'}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {/* ============ §05 HOW THE DATA IS BUILT ============ */}
+  <section class="how" id="how">
+    <div class="container-page">
+      <header class="how-head">
+        <p class="section-no">{isPt ? '§ 05 — como o dado é construído' : '§ 05 — how the data is built'}</p>
+        <h2>{isPt ? 'Um pipeline aberto. Sem caixa-preta.' : 'An open pipeline. No black box.'}</h2>
+      </header>
+      <pre class="term"><code>{`> ingest manjaro flathub aur debian   → ${fmt.format(stats.packages.total)} ${dict.how.t1}
+> classify --oars --ai --review       → ${fmt.format(totalRatings)} ${dict.how.t2}
+> translate --locales pt,en,es,de,…   → ${fmt.format(totalTrPkgs)} ${dict.how.t3}
+> publish --html --dataset --appstream → /${locale}/p/firefox`}</code></pre>
+
+      <ol class="how-steps">
+        <li><span class="step-no">01</span><h3>{dict.how.s1t}</h3><p>{dict.how.s1b}</p></li>
+        <li><span class="step-no">02</span><h3>{dict.how.s2t}</h3><p>{dict.how.s2b}</p></li>
+        <li><span class="step-no">03</span><h3>{dict.how.s3t}</h3><p>{dict.how.s3b}</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <RuleDivider tone="terracotta" variant="wave" />
+
+  {/* ============ §06 WHY THIS MATTERS (compact) ============ */}
+  <section class="why-sec">
+    <div class="container-page">
+      <header class="sec-head">
+        <p class="section-no">{isPt ? '§ 06 — por que isto importa agora' : '§ 06 — why this matters now'}</p>
+        <h2>{isPt ? 'Metadados claros viram base, não improviso.' : 'Clear metadata becomes a base, not guesswork.'}</h2>
+      </header>
+      <LawBand locale={locale} />
+    </div>
+  </section>
+
+  {/* ============ §07 TAKE PART ============ */}
+  <section class="support">
+    <div class="container-page">
+      <header class="sup-head">
+        <p class="section-no">{isPt ? '§ 07 — como você participa' : '§ 07 — how you take part'}</p>
+        <h2>{isPt
+          ? 'A próxima classificação revisada pode evitar uma decisão ruim.'
+          : 'The next reviewed rating can prevent a bad decision.'}</h2>
+        <p class="lead">{isPt
+          ? 'Você não precisa manter uma distribuição para ajudar. Buscar, apontar erro, revisar uma classificação ou traduzir uma descrição já melhora o dado que outras pessoas vão reutilizar.'
+          : 'You do not need to maintain a distro to help. Searching, reporting an error, reviewing one rating or translating one description already improves data other people will reuse.'}</p>
+      </header>
+      <ol class="ladder">
+        <li class="rung">
+          <span class="rung-tag">{dict.sup.useTag}</span>
+          <h3>{dict.sup.useTitle}</h3>
+          <p>{dict.sup.useBody}</p>
+          <a class="btn btn-ghost" href={localePath(locale, '/browse')}>{dict.sup.useCta} →</a>
+        </li>
+        <li class="rung">
+          <span class="rung-tag">{dict.sup.buildTag}</span>
+          <h3>{dict.sup.buildTitle}</h3>
+          <p>{dict.sup.buildBody}</p>
+          <a class="btn btn-ghost" href={localePath(locale, '/auth/signup')}>{dict.sup.buildCta} →</a>
+        </li>
+        <li class="rung rung-emph">
+          <span class="rung-tag">{dict.sup.sponsorTag}</span>
+          <h3>{dict.sup.sponsorTitle}</h3>
+          <p>{dict.sup.sponsorBody}</p>
+          <a class="btn btn-primary" href={localePath(locale, '/sponsor')}>{dict.sup.sponsorCta} →</a>
+        </li>
+      </ol>
+      <p class="reuse-line">{isPt ? 'Constrói uma distribuição, loja ou pesquisa?' : 'Building a distro, store or research?'}
+        <a href={localePath(locale, '/transparency')}>{isPt ? 'Reutilize o dataset aberto (JSON · CSV · AppStream)' : 'Reuse the open dataset (JSON · CSV · AppStream)'} →</a></p>
+    </div>
+  </section>
+
+  {/* ============ §08 FAQ ============ */}
+  <section class="faq">
+    <div class="container-prose">
+      <p class="section-no">{isPt ? '§ 08 — perguntas frequentes' : '§ 08 — frequently asked'}</p>
+      <h2>{isPt ? 'Respostas curtas para dúvidas importantes.' : 'Short answers to important questions.'}</h2>
+      <dl class="faq-list">
+        <dt>{dict.faq.q1}</dt><dd>{dict.faq.a1}</dd>
+        <dt>{dict.faq.q2}</dt><dd>{dict.faq.a2}</dd>
+        <dt>{dict.faq.q3}</dt><dd>{dict.faq.a3}</dd>
+        <dt>{dict.faq.q4}</dt><dd>{dict.faq.a4}</dd>
+      </dl>
+    </div>
+  </section>
+</Base>
+
+<style>
+  /* ============ Shared rhythm ============ */
+  section { padding-block: var(--space-16); }
+  .section-no {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-forest);
+    margin: 0 0 var(--space-3);
+  }
+  h2 {
+    font-size: clamp(1.8rem, 3vw, 2.4rem);
+    margin: 0 0 var(--space-5);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+  .lead {
+    color: var(--color-ink-muted);
+    font-size: var(--text-lg);
+    max-inline-size: 58ch;
+    line-height: 1.55;
+    margin: 0 0 var(--space-6);
+  }
+  .sec-head { max-inline-size: 64ch; margin-block-end: var(--space-8); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: var(--space-2);
+    padding: 0.6rem 1.2rem;
+    border-radius: var(--radius-full);
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.92rem;
+    transition: background var(--duration-fast), color var(--duration-fast), transform var(--duration-fast), box-shadow var(--duration-fast);
+  }
+  .btn-primary { background: var(--color-forest); color: var(--color-on-accent); box-shadow: var(--shadow-sm); }
+  .btn-primary:hover { background: var(--color-forest-hover); color: var(--color-on-accent); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .btn-ghost { background: color-mix(in srgb, var(--color-forest) 10%, transparent); color: var(--color-forest); }
+  .btn-ghost:hover { background: color-mix(in srgb, var(--color-forest) 18%, transparent); color: var(--color-forest); }
+
+  /* ============ §01 Hero — bold dark band ============ */
+  .hero {
+    background: var(--surface-hero);
+    background-image:
+      radial-gradient(120% 120% at 0% 0%, color-mix(in srgb, var(--age-3) 22%, transparent) 0%, transparent 45%),
+      radial-gradient(120% 120% at 100% 100%, color-mix(in srgb, var(--age-18) 26%, transparent) 0%, transparent 50%);
+    color: var(--surface-hero-fg);
+    padding-block: var(--space-20) var(--space-16);
+    border-block-end: 1px solid var(--surface-hero-rule);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: var(--space-12);
+    align-items: center;
+  }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: var(--space-10); } }
+
+  .hero .kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 var(--space-5);
+    padding: 6px 14px;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--age-3) 22%, transparent);
+    color: #d6f5e3;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .hero h1.display {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-display);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    color: var(--surface-hero-fg);
+    max-inline-size: 16ch;
+  }
+  .hero .lead {
+    margin: var(--space-6) 0 var(--space-8);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 1.18rem;
+    color: var(--surface-hero-muted);
+    max-inline-size: 50ch;
+    line-height: 1.55;
+  }
+
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-inline-size: 34rem;
+    background: var(--color-paper-elev);
+    border-radius: var(--radius-full);
+    padding: 7px 7px 7px 20px;
+    box-shadow: var(--shadow-hero);
+  }
+  .search input {
+    font-family: var(--font-sans);
+    font-size: 1.05rem;
+    padding: 0.6rem 0;
+    background: transparent;
+    border: none;
+    color: var(--color-ink);
+    inline-size: 100%;
+    min-inline-size: 0;
+  }
+  .search input::placeholder { color: var(--color-ink-muted); }
+  .search input:focus { outline: none; }
+  .search button {
+    font-weight: 700;
+    font-size: 1.15rem;
+    background: var(--color-forest);
+    color: var(--color-on-accent);
+    border: none;
+    inline-size: 46px;
+    block-size: 46px;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--duration-fast), transform var(--duration-fast);
+  }
+  .search button:hover { background: var(--color-forest-hover); transform: scale(1.05); }
+
+  .hero-aux { margin-block-start: var(--space-4); }
+  .suggest {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--surface-hero-muted);
+    margin: 0;
+    line-height: 1.6;
+  }
+  .suggest .suggest-cap { margin-inline-end: 0.5em; }
+  .suggest a { color: #d6f5e3; text-decoration: none; border-block-end: 1px solid transparent; }
+  .suggest a:hover { border-block-end-color: currentColor; }
+  .suggest .dot { color: var(--surface-hero-rule); }
+
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+
+  .specimens { display: grid; gap: var(--space-3); }
+  .proof-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); }
+  .proof-strip span {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-block-size: 56px;
+    padding: 0.5rem;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--surface-hero-fg) 8%, transparent);
+    border: 1px solid var(--surface-hero-rule);
+    color: var(--surface-hero-muted);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-align: center;
+  }
+  .proof-strip strong {
+    font-size: 1.05rem;
+    color: var(--surface-hero-fg);
+    font-feature-settings: "lnum","tnum";
+  }
+  .specimen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  @media (max-width: 600px) { .specimen-grid { grid-template-columns: 1fr; } }
+
+  /* ============ §02 Spotlight ============ */
+  .spotlight-sec { padding-block: var(--space-16); }
+
+  /* ============ §03 Doorways ============ */
+  .doorways-sec { padding-block: var(--space-12); }
+  .doorways {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-5);
+    margin-block-end: var(--space-8);
+  }
+  .cat-index { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .cat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--radius-full);
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    text-decoration: none;
+    color: var(--color-ink);
+    font-size: 0.9rem;
+    transition: border-color var(--duration-fast), transform var(--duration-fast);
+  }
+  .cat-chip:hover { border-color: var(--color-forest); transform: translateY(-1px); }
+  .cat-label { font-weight: 500; }
+  .cat-count {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-ink-muted);
+  }
+  .cat-all { color: var(--color-forest); font-weight: 600; }
+
+  /* ============ §04 Metrics / Trust ============ */
+  .metrics { padding-block: var(--space-12); }
+  .m-note { color: var(--color-ink-muted); font-size: var(--text-base); margin: 0; max-inline-size: 64ch; line-height: 1.55; }
+  .prov-legend {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-6);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-6);
+  }
+  .prov-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--color-ink-muted);
+  }
+  .prov-legend strong { color: var(--color-ink); font-weight: 600; }
+  .prov-legend i { inline-size: 10px; block-size: 10px; display: inline-block; border-radius: 2px; }
+  .m-table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
+  .m-table th, .m-table td {
+    text-align: start;
+    padding: var(--space-4) var(--space-3);
+    border-block-end: 1px solid var(--color-rule);
+    vertical-align: baseline;
+  }
+  .m-table thead th {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-ink-muted);
+    border-block-end: 2px solid var(--color-ink);
+  }
+  .m-table tbody th[scope="row"] {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--text-lg);
+    color: var(--color-ink);
+    width: 30%;
+  }
+  .m-table td.num, .m-table th.num {
+    font-family: var(--font-mono);
+    font-feature-settings: "lnum","tnum";
+    font-size: var(--text-2xl);
+    color: var(--color-ink);
+    width: 18%;
+    text-align: end;
+  }
+  .m-table .detail {
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    align-items: center;
+  }
+  .bd { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
+  .bd i { inline-size: 8px; block-size: 8px; display: inline-block; }
+  .bd-imp { background: var(--color-slate-blue); }
+  .bd-ai  { background: var(--age-12); }
+  .bd-hum { background: var(--age-3); }
+  .bd-extra { width: 100%; color: var(--color-ink-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
+
+  /* ============ §05 How ============ */
+  .how-head { max-inline-size: 50ch; margin-block-end: var(--space-6); }
+  .term {
+    margin: 0 0 var(--space-10);
+    padding: var(--space-5) var(--space-6);
+    background: var(--color-paper-elev);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.85;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow-x: auto;
+  }
+  .how-steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-8);
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .how-steps li { padding: var(--space-5); border-radius: var(--radius-lg); background: var(--color-paper-elev); box-shadow: var(--shadow-card); }
+  .how-steps .step-no { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xs); color: var(--color-forest); letter-spacing: 0.1em; }
+  .how-steps h3 { margin: var(--space-2) 0; font-size: var(--text-xl); font-weight: 600; }
+  .how-steps p { color: var(--color-ink-muted); margin: 0; }
+
+  /* ============ §06 Why (compact) ============ */
+  .why-sec { padding-block: var(--space-12); }
+
+  /* ============ §07 Support ============ */
+  .sup-head { max-inline-size: 60ch; margin-block-end: var(--space-8); }
+  .sup-head .lead { margin-block-start: var(--space-4); }
+  .ladder {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-6);
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-6);
+  }
+  .rung {
+    padding: var(--space-6);
+    border-radius: var(--radius-xl);
+    background: var(--color-paper-elev);
+    box-shadow: var(--shadow-card);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    transition: transform var(--duration-fast) var(--ease-out-expo), box-shadow var(--duration-fast) var(--ease-out-expo);
+  }
+  .rung:hover { transform: translateY(-3px); box-shadow: var(--shadow-card-hover); }
+  .rung-tag { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-ink-muted); }
+  .rung h3 { margin: 0; font-size: var(--text-xl); font-weight: 600; }
+  .rung p { color: var(--color-ink-muted); margin: 0; flex: 1; font-size: var(--text-sm); line-height: 1.6; }
+  .rung .btn { align-self: flex-start; }
+  .rung-emph { background: linear-gradient(135deg, color-mix(in srgb, var(--color-forest) 12%, var(--color-paper-elev)), var(--color-paper-elev)); }
+  .rung-emph .rung-tag { color: var(--color-forest); }
+  .reuse-line {
+    margin: 0;
+    padding: var(--space-4) var(--space-5);
+    background: color-mix(in srgb, var(--color-forest) 6%, var(--color-paper-elev));
+    border-radius: var(--radius-lg);
+    font-size: 0.95rem;
+    color: var(--color-ink);
+  }
+  .reuse-line a { color: var(--color-forest); text-decoration: none; font-weight: 600; margin-inline-start: 0.4em; }
+  .reuse-line a:hover { text-decoration: underline; }
+
+  /* ============ §08 FAQ ============ */
+  .faq { padding-block: var(--space-16) var(--space-24); }
+  .faq h2 { margin: 0 0 var(--space-8); }
+  .faq-list dt {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--text-xl);
+    color: var(--color-ink);
+    margin-block-start: var(--space-5);
+  }
+  .faq-list dd {
+    margin: var(--space-2) 0 0;
+    color: var(--color-ink);
+    padding-block-end: var(--space-5);
+    border-block-end: 1px solid var(--color-rule);
+  }
+
+  @media (max-width: 980px) {
+    .how-steps, .ladder { grid-template-columns: 1fr; }
+    .m-table thead { display: none; }
+    .m-table, .m-table tbody, .m-table tr, .m-table th, .m-table td { display: block; width: 100% !important; text-align: start; }
+    .m-table tr { border-block-end: 1px solid var(--color-rule); padding-block: var(--space-3); }
+    .m-table td.num { font-size: var(--text-3xl); padding-block: var(--space-1); }
+  }
+</style>

@@ -1,0 +1,112 @@
+# Production compose for the ICP Core VPS (4 vCPU AMD EPYC x86_64, 6 GB RAM,
+# 100 GB NVMe). Postgres + web + Ollama on one box.
+#
+# TLS + reverse proxy are handled by the iContainer panel's OpenResty (front
+# door on 80/443). This stack publishes the web app on 127.0.0.1:4400 and the
+# panel proxies linux-meta.duckdns.org -> http://127.0.0.1:4400 with Let's
+# Encrypt SSL. No Caddy here (the panel owns 80/443).
+#
+# Unlike the old Oracle Micro (1 GB), there is room for Ollama, so semantic
+# search is ON and memory limits are relaxed (~4.7 GB caps, ~1.3 GB for the OS).
+name: linux-meta
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: linuxmeta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: linuxmeta
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linuxmeta}
+      POSTGRES_DB: linuxmeta
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init/01-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
+    # Sized for a 6 GB box. max_connections covers the app pool (max:10) plus
+    # psql/drizzle-kit/backfill headroom. shared_buffers/effective_cache_size
+    # bumped 4x vs the Micro now that RAM isn't the bottleneck.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_connections=40
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U linuxmeta -d linuxmeta"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1536m
+    security_opt:
+      - no-new-privileges:true
+
+  # Local embeddings for semantic search (nomic-embed-text, 768-dim). Only the
+  # embeddings endpoint is used — light at query time; heavier during backfill.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: linuxmeta-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    # No published port: only the web container talks to it over the compose net.
+    expose:
+      - "11434"
+    mem_limit: 2048m
+    security_opt:
+      - no-new-privileges:true
+
+  # One-shot: pull the embedding model into the ollama volume on first boot.
+  # Idempotent — a second run is a no-op once the model is cached.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint:
+      - sh
+      - -c
+      - 'until ollama list >/dev/null 2>&1; do echo "waiting for ollama..."; sleep 2; done; ollama pull nomic-embed-text && echo "model ready"'
+    restart: "no"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        PUBLIC_SITE_URL: https://linux-meta.duckdns.org
+        PUBLIC_DEFAULT_LOCALE: pt
+    container_name: linuxmeta-web
+    restart: unless-stopped
+    env_file:
+      - ../../.env.prod
+    environment:
+      # Point the app at the in-network Ollama service regardless of what
+      # .env.prod says. Semantic search auto-falls back to trigram if this
+      # endpoint is unreachable, so it degrades gracefully.
+      OLLAMA_URL: http://ollama:11434
+      # Heap ceiling under the cgroup limit so Node GCs before the OOM killer.
+      NODE_OPTIONS: --max-old-space-size=768
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    # Publish ONLY on loopback: the panel's OpenResty (running on the host)
+    # reverse-proxies to this. Not reachable directly from the internet.
+    ports:
+      - "127.0.0.1:4400:4400"
+    mem_limit: 1024m
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:
+  ollama_data:

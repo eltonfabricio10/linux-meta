@@ -1,0 +1,189 @@
+---
+/** Public governance page (Fase 5).
+ *
+ * - Lists current admins (name + email) — query `user WHERE role='admin'`.
+ * - Shows aggregate counts of admin actions in the last 30 days from
+ *   audit_log, grouped by action. No actor identity is ever exposed here.
+ * - Links to dispute flow and audit (latter visible only to admins, but
+ *   the link is public so people know it exists).
+ * - Explicitly states the gaps: no conflict-of-interest policy yet, no
+ *   funding received yet. Sets a target date 30 days from today.
+ * - Inline-dict i18n (pt/en) to avoid touching the global JSON files.
+ * - prerender = false because admin actions aggregate is live.
+ */
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+void t(locale);
+const isPt = locale === 'pt';
+
+const fmt = new Intl.NumberFormat(isPt ? 'pt-BR' : 'en-US');
+
+const admins = await db.execute<{ name: string; email: string }>(sql`
+  SELECT name, email FROM "user" WHERE role = 'admin' ORDER BY name
+`);
+const adminActions = await db.execute<{ action: string; n: number }>(sql`
+  SELECT action, COUNT(*)::int AS n
+    FROM audit_log
+   WHERE at > NOW() - INTERVAL '30 days'
+   GROUP BY action
+   ORDER BY n DESC
+`);
+
+const adminsList = admins as unknown as Array<{ name: string; email: string }>;
+const actionsList = adminActions as unknown as Array<{ action: string; n: number }>;
+const totalActions = actionsList.reduce((acc, r) => acc + r.n, 0);
+
+// Date target: today + 30 days. Today (build) is the runtime date; we keep
+// it dynamic so the deadline is always 30 days from when someone reads.
+const targetDate = new Date(Date.now() + 30 * 86_400_000)
+  .toISOString()
+  .slice(0, 10);
+
+const L = isPt
+  ? {
+      title: 'Governança',
+      intro: 'Como decisões são tomadas, registradas e contestadas neste projeto. Página pública, gerada do banco em tempo real.',
+      whoTitle: 'Quem decide',
+      whoIntro: 'Pessoas com o papel admin podem moderar disputas, promover traduções e configurar políticas. Qualquer decisão pode ser contestada via fluxo de disputa.',
+      noAdmins: 'Nenhum admin cadastrado.',
+      auditTitle: 'Como decisões são registradas',
+      auditBody1:
+        'Toda mutação relevante (revisão de tradução, alteração de classificação, abertura/resolução de disputa, ingestão de dados) entra em audit_log com actor, ação, entidade e timestamp.',
+      auditBody2:
+        'Apenas admins veem o log detalhado. O total agregado dos últimos 30 dias é público abaixo. Nomes nunca aparecem em agregados públicos.',
+      auditLinkLabel: 'Painel admin (acesso restrito)',
+      aggTitle: 'Ações de administração — últimos 30 dias',
+      aggCol: ['Ação', 'Contagem'],
+      aggEmpty: 'Nenhuma ação registrada nos últimos 30 dias.',
+      aggTotal: 'Total',
+      disputeTitle: 'Como contestar',
+      disputeBody:
+        'Qualquer pessoa pode abrir uma disputa em uma página de pacote. Disputas vão para a fila pública e são resolvidas por reviewer/admin com decisão registrada.',
+      disputeLink: 'Abrir disputa (a partir de uma página de pacote)',
+      coiTitle: 'Conflitos de interesse',
+      coiBody: 'Ainda não há política publicada.',
+      coiNext: `Próximo passo: redigir até ${targetDate}.`,
+      fundingTitle: 'Financiamento',
+      fundingBody: 'Ainda não há doações recebidas. Open Collective em construção.',
+    }
+  : {
+      title: 'Governance',
+      intro: 'How decisions are made, recorded, and challenged on this project. Public page, generated live from the database.',
+      whoTitle: 'Who decides',
+      whoIntro: 'People with the admin role can moderate disputes, promote translations, and set policy. Any decision can be challenged via the dispute flow.',
+      noAdmins: 'No admins registered.',
+      auditTitle: 'How decisions are recorded',
+      auditBody1:
+        'Every relevant mutation (translation review, rating change, dispute open/resolve, data ingest) goes into audit_log with actor, action, entity, and timestamp.',
+      auditBody2:
+        'Only admins see the detailed log. The aggregate total for the last 30 days is shown publicly below. Names never appear in public aggregates.',
+      auditLinkLabel: 'Admin dashboard (restricted access)',
+      aggTitle: 'Admin actions — last 30 days',
+      aggCol: ['Action', 'Count'],
+      aggEmpty: 'No actions recorded in the last 30 days.',
+      aggTotal: 'Total',
+      disputeTitle: 'How to challenge',
+      disputeBody:
+        'Anyone can open a dispute on a package page. Disputes go into the public queue and are resolved by a reviewer/admin with the decision logged.',
+      disputeLink: 'Open a dispute (from a package page)',
+      coiTitle: 'Conflicts of interest',
+      coiBody: 'No policy published yet.',
+      coiNext: `Next step: draft by ${targetDate}.`,
+      fundingTitle: 'Funding',
+      fundingBody: 'No donations received yet. Open Collective under construction.',
+    };
+---
+
+<Base title={L.title} description={L.intro}>
+  <section class="wrap">
+    <div class="container-prose">
+      <p class="banner">v0.1 · early access · honest by default</p>
+      <h1>{L.title}</h1>
+      <p class="lead">{L.intro}</p>
+
+      <h2>{L.whoTitle}</h2>
+      <p>{L.whoIntro}</p>
+      {adminsList.length === 0 ? (
+        <p class="cap">{L.noAdmins}</p>
+      ) : (
+        <ul class="admins">
+          {adminsList.map((a) => (
+            <li><strong>{a.name}</strong> · <a href={`mailto:${a.email}`}><code>{a.email}</code></a></li>
+          ))}
+        </ul>
+      )}
+
+      <h2>{L.auditTitle}</h2>
+      <p>{L.auditBody1}</p>
+      <p>{L.auditBody2}</p>
+      <p class="cap"><a href={localePath(locale, '/admin')}>{L.auditLinkLabel}</a></p>
+
+      <h3>{L.aggTitle}</h3>
+      {actionsList.length === 0 ? (
+        <p class="cap">{L.aggEmpty}</p>
+      ) : (
+        <table class="agg">
+          <thead><tr>{L.aggCol.map((c) => <th scope="col">{c}</th>)}</tr></thead>
+          <tbody>
+            {actionsList.map((r) => (
+              <tr><th scope="row"><code>{r.action}</code></th><td class="n">{fmt.format(r.n)}</td></tr>
+            ))}
+            <tr class="tot"><th scope="row">{L.aggTotal}</th><td class="n">{fmt.format(totalActions)}</td></tr>
+          </tbody>
+        </table>
+      )}
+
+      <h2>{L.disputeTitle}</h2>
+      <p>{L.disputeBody}</p>
+      <p class="cap"><a href={localePath(locale, '/browse')}>{L.disputeLink}</a></p>
+
+      <h2>{L.coiTitle}</h2>
+      <p>{L.coiBody}</p>
+      <p class="cap">{L.coiNext}</p>
+
+      <h2>{L.fundingTitle}</h2>
+      <p>{L.fundingBody}</p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-16) var(--space-24); }
+  h1 { margin: 0 0 var(--space-4); }
+  h2 { font-size: var(--text-2xl); margin: var(--space-12) 0 var(--space-3); }
+  h3 { font-size: var(--text-lg); margin: var(--space-8) 0 var(--space-3); color: var(--color-navy-900); }
+  .lead { font-size: var(--text-lg); color: var(--color-fg-muted); margin-block-end: var(--space-10); }
+  .banner {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: var(--color-amber-200);
+    color: var(--color-navy-900);
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    margin-block-end: var(--space-4);
+    font-weight: 700;
+  }
+  .cap { color: var(--color-fg-muted); font-size: 0.9rem; max-inline-size: 64ch; }
+  .admins { list-style: none; padding: 0; margin: var(--space-4) 0 var(--space-2); display: grid; gap: var(--space-2); }
+  .admins li { padding: var(--space-2) 0; border-block-end: 1px solid var(--color-border); }
+  .admins code { font-family: var(--font-mono); font-size: 0.85rem; color: var(--color-teal-700); }
+  table.agg { width: 100%; border-collapse: collapse; margin-block: var(--space-4) var(--space-6); }
+  table.agg th, table.agg td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); font-size: 0.9rem; }
+  table.agg thead th { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-fg-muted); }
+  table.agg tbody th code { font-family: var(--font-mono); color: var(--color-teal-700); }
+  table.agg td.n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.agg tr.tot th, table.agg tr.tot td { border-block-end: none; padding-block-start: var(--space-4); color: var(--color-navy-900); font-weight: 700; }
+</style>

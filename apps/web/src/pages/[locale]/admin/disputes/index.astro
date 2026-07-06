@@ -1,0 +1,195 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath, defaultLocale } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, gte, type SQL } from 'drizzle-orm';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const STRINGS = {
+  en: {
+    pageTitle: 'Disputes',
+    intro: 'Mediation queue for community-raised rating disputes.',
+    statusLabel: 'Status',
+    ageLabel: 'Max age (days)',
+    all: 'All',
+    apply: 'Filter',
+    reset: 'Reset',
+    empty: 'No disputes match the current filters.',
+    id: 'ID',
+    pkg: 'Package',
+    suggested: 'Suggested',
+    reason: 'Reason',
+    reporter: 'Reporter',
+    created: 'Created',
+    statusCol: 'Status',
+    open: 'Open',
+  },
+  pt: {
+    pageTitle: 'Disputas',
+    intro: 'Fila de mediação para disputas de avaliação reportadas pela comunidade.',
+    statusLabel: 'Estado',
+    ageLabel: 'Idade máx. (dias)',
+    all: 'Todas',
+    apply: 'Filtrar',
+    reset: 'Limpar',
+    empty: 'Sem disputas para os filtros aplicados.',
+    id: 'ID',
+    pkg: 'Pacote',
+    suggested: 'Sugerida',
+    reason: 'Motivo',
+    reporter: 'Reportada por',
+    created: 'Criada',
+    statusCol: 'Estado',
+    open: 'Abrir',
+  },
+} as const;
+const L = STRINGS[locale as keyof typeof STRINGS] ?? STRINGS[defaultLocale as keyof typeof STRINGS];
+
+const STATUS_OPTIONS = ['open', 'reviewing', 'resolved', 'rejected'] as const;
+const params = Astro.url.searchParams;
+const statusRaw = params.get('status');
+const status = STATUS_OPTIONS.includes(statusRaw as typeof STATUS_OPTIONS[number])
+  ? (statusRaw as typeof STATUS_OPTIONS[number]) : null;
+const ageRaw = params.get('age');
+const ageDays = ageRaw && /^\d+$/.test(ageRaw) ? Math.min(3650, Math.max(1, Number(ageRaw))) : null;
+
+const conds: SQL[] = [];
+if (status) conds.push(eq(schema.dispute.status, status));
+if (ageDays !== null) {
+  const cutoff = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+  conds.push(gte(schema.dispute.createdAt, cutoff));
+}
+const where = conds.length > 0 ? and(...conds) : undefined;
+
+const rows = await db
+  .select({
+    id: schema.dispute.id,
+    packageId: schema.dispute.packageId,
+    packageName: schema.packageTable.name,
+    packageSlug: schema.packageTable.slug,
+    suggestedAge: schema.dispute.suggestedAge,
+    reason: schema.dispute.reason,
+    status: schema.dispute.status,
+    reporterEmail: schema.dispute.reporterEmail,
+    reporterUserId: schema.dispute.reporterUserId,
+    createdAt: schema.dispute.createdAt,
+  })
+  .from(schema.dispute)
+  .innerJoin(schema.packageTable, eq(schema.dispute.packageId, schema.packageTable.id))
+  .where(where)
+  .orderBy(desc(schema.dispute.createdAt))
+  .limit(200);
+
+const backHref = localePath(locale, '/admin');
+function detailHref(id: number) { return localePath(locale, `/admin/disputes/${id}`); }
+function snippet(s: string, n = 80) { return s.length > n ? `${s.slice(0, n)}…` : s; }
+---
+<Base title={`${L.pageTitle} · ${dict.admin.adminTitle}`}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs"><a href={backHref}>{dict.admin.navAdmin}</a> / {L.pageTitle}</p>
+      <h1>{L.pageTitle}</h1>
+      <p class="intro">{L.intro}</p>
+
+      <form method="get" class="filters" role="search">
+        <label>
+          <span>{L.statusLabel}</span>
+          <select name="status">
+            <option value="">{L.all}</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option value={s} selected={status === s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{L.ageLabel}</span>
+          <input type="number" name="age" value={ageDays ?? ''} min="1" max="3650" />
+        </label>
+        <div class="actions">
+          <button type="submit">{L.apply}</button>
+          <a href={Astro.url.pathname} class="reset">{L.reset}</a>
+        </div>
+      </form>
+
+      <article class="card">
+        {rows.length === 0 ? (
+          <p class="empty">{L.empty}</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>{L.id}</th>
+                <th>{L.pkg}</th>
+                <th class="num">{L.suggested}</th>
+                <th>{L.reason}</th>
+                <th>{L.reporter}</th>
+                <th>{L.created}</th>
+                <th>{L.statusCol}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr>
+                  <td class="mono">#{r.id}</td>
+                  <td><a href={`/p/${r.packageSlug}`}>{r.packageName}</a></td>
+                  <td class="num">{r.suggestedAge}+</td>
+                  <td class="snippet" title={r.reason}>{snippet(r.reason)}</td>
+                  <td class="mono">{r.reporterEmail ?? r.reporterUserId ?? '—'}</td>
+                  <td>{new Date(r.createdAt).toLocaleDateString()}</td>
+                  <td><span class={`badge status-${r.status}`}>{r.status}</span></td>
+                  <td><a class="open" href={detailHref(r.id)}>{L.open}</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </article>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-3); }
+  .intro { color: var(--color-fg-muted); margin: 0 0 var(--space-6); max-width: 60ch; }
+  .crumbs { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-size: 0.9rem; }
+  .crumbs a { color: inherit; text-decoration: underline; }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-3); margin-block-end: var(--space-6); align-items: end; }
+  .filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+  .filters input, .filters select { font: inherit; padding: 0.4rem 0.6rem; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-bg-elevated); color: var(--color-fg); }
+  .actions { display: flex; gap: var(--space-3); align-items: center; }
+  .actions button { font: inherit; padding: 0.45rem 1rem; border-radius: var(--radius-full); border: 1px solid var(--color-border); background: var(--color-cta); color: var(--color-cta-fg); font-weight: 600; cursor: pointer; }
+  .actions .reset { color: var(--color-fg-muted); text-decoration: underline; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); vertical-align: middle; }
+  th { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--font-mono, monospace); font-size: 0.85em; }
+  .snippet { max-width: 36ch; color: var(--color-fg-muted); }
+  .empty { color: var(--color-fg-muted); margin: 0; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: var(--radius-full); font-size: 0.78rem; font-weight: 600; }
+  .status-open { background: var(--color-amber-100, #fcefc7); color: var(--color-amber-800, #7c4b00); }
+  .status-reviewing { background: var(--color-teal-100, #d2efee); color: var(--color-teal-800, #07484a); }
+  .status-resolved { background: var(--color-sage-100, #d8e8d4); color: var(--color-sage-700, #355c2b); }
+  .status-rejected { background: var(--color-terra-100, #f7e1dc); color: var(--color-terra-800, #6e2a1d); }
+  .open { text-decoration: underline; font-weight: 600; }
+</style>

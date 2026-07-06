@@ -1,0 +1,191 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales, localePath } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+import {
+  getQualityRollup, getQualityList, QUALITY_SIGNALS, type QualitySignal,
+} from '~/lib/quality';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const isPt = locale === 'pt';
+
+if (!Astro.locals.user) return Astro.redirect(`/${locale}/auth/login`);
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) return Astro.redirect(`/${locale}/auth/login`);
+
+const labels: Record<QualitySignal, [string, string]> = {
+  'no-human-tr': ['Sem revisão humana', 'No human review'],
+  'ai-rating': ['Classificação da IA', 'AI rating'],
+  'missing-profile': ['Sem perfil completo', 'Missing profile'],
+  'no-embedding': ['Sem embedding', 'No embedding'],
+  'open-cve': ['CVE aberta', 'Open CVE'],
+};
+const lbl = (s: QualitySignal) => (isPt ? labels[s][0] : labels[s][1]);
+
+const signalParam = Astro.url.searchParams.get('signal') as QualitySignal | null;
+const signal: QualitySignal = signalParam && QUALITY_SIGNALS.includes(signalParam) ? signalParam : 'no-human-tr';
+const offsetRaw = Number.parseInt(Astro.url.searchParams.get('offset') ?? '0', 10);
+const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, 100_000) : 0;
+const PAGE = 40;
+
+const rollup = await getQualityRollup();
+const { items, total } = await getQualityList(signal, PAGE, offset);
+const fmt = new Intl.NumberFormat(isPt ? 'pt-BR' : 'en-US');
+const currentPage = Math.floor(offset / PAGE) + 1;
+const totalPages = Math.max(1, Math.ceil(total / PAGE));
+
+/* Where to send a reviewer to fix this item, by signal. */
+function fixHref(id: number): string {
+  if (signal === 'no-human-tr') return localePath(locale, `/traduzir?package=${id}`);
+  if (signal === 'ai-rating') return localePath(locale, `/admin/ratings?package=${id}`);
+  return localePath(locale, `/admin/packages/${id}`);
+}
+
+function pageHref(o: number): string {
+  const p = new URLSearchParams({ signal });
+  if (o > 0) p.set('offset', String(o));
+  return `${Astro.url.pathname}?${p.toString()}`;
+}
+---
+
+<Base title={isPt ? 'Qualidade' : 'Quality'}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumb"><a href={`/${locale}/admin`}>← {isPt ? 'Painel' : 'Dashboard'}</a></p>
+      <h1>{isPt ? 'Radar de qualidade' : 'Quality radar'}</h1>
+      <p class="lead">{isPt
+        ? 'Lacunas ordenadas por popularidade — conserte primeiro o que tem mais tráfego.'
+        : 'Gaps ordered by popularity — fix the highest-traffic ones first.'}</p>
+
+      <nav class="chips" aria-label={isPt ? 'Sinais' : 'Signals'}>
+        {QUALITY_SIGNALS.map((s) => (
+          <a class={s === signal ? 'chip active' : 'chip'} href={`${Astro.url.pathname}?signal=${s}`}>
+            {lbl(s)}<span class="n">{fmt.format(rollup[s])}</span>
+          </a>
+        ))}
+      </nav>
+
+      <article class="card">
+        <h2>{lbl(signal)} — {fmt.format(total)}</h2>
+        {signal === 'no-embedding' && (
+          <div class="embed-action">
+            <button id="gen-emb" type="button" data-limit="50">
+              {isPt ? 'Gerar embeddings (próximos 50)' : 'Generate embeddings (next 50)'}
+            </button>
+            <span id="gen-emb-result" class="embed-result"></span>
+            <p class="embed-hint">{isPt
+              ? 'Usa o Ollama local (nomic-embed-text). Os mais populares primeiro.'
+              : 'Uses local Ollama (nomic-embed-text). Most popular first.'}</p>
+          </div>
+        )}
+        {items.length === 0 ? (
+          <p class="empty">{isPt ? 'Nada aqui. 🎉' : 'Nothing here. 🎉'}</p>
+        ) : (
+          <table>
+            <thead><tr>
+              <th>{isPt ? 'Pacote' : 'Package'}</th>
+              <th class="n">{isPt ? 'Popularidade' : 'Popularity'}</th>
+              <th>{isPt ? 'Detalhe' : 'Detail'}</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {items.map((it) => (
+                <tr>
+                  <td><a href={localePath(locale, `/p/${it.slug}`)} target="_blank" rel="noopener">{it.name}</a></td>
+                  <td class="n">{fmt.format(it.popularity)}</td>
+                  <td><code>{it.detail}</code></td>
+                  <td><a class="fix" href={fixHref(it.id)}>{isPt ? 'Corrigir' : 'Fix'} →</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {totalPages > 1 && (
+          <nav class="pag" aria-label="Pagination">
+            {offset > 0 && <a href={pageHref(Math.max(0, offset - PAGE))}>← {isPt ? 'Anterior' : 'Prev'}</a>}
+            <span class="mono">{currentPage} / {totalPages}</span>
+            {offset + PAGE < total && <a href={pageHref(offset + PAGE)}>{isPt ? 'Próximo' : 'Next'} →</a>}
+          </nav>
+        )}
+      </article>
+    </div>
+  </section>
+
+  <script is:inline>
+    (function () {
+      const btn = document.getElementById('gen-emb');
+      if (!btn) return;
+      const out = document.getElementById('gen-emb-result');
+      btn.addEventListener('click', async function () {
+        btn.disabled = true;
+        if (out) out.textContent = '…';
+        try {
+          const res = await fetch('/api/v1/admin/embeddings', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ limit: Number(btn.dataset.limit || '50') }),
+          });
+          const body = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            if (out) out.textContent = body.message || body.error || ('HTTP ' + res.status);
+            btn.disabled = false;
+            return;
+          }
+          if (out) out.textContent = 'OK: ' + body.processed + ' gerados, ' + body.failed + ' falhas, ' + body.remaining + ' restantes';
+          setTimeout(function () { location.reload(); }, 1200);
+        } catch (e) {
+          if (out) out.textContent = String(e);
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .crumb { margin: 0 0 var(--space-2); font-family: var(--font-mono); font-size: 0.78rem; }
+  .crumb a { color: var(--color-forest); text-decoration: none; }
+  h1 { margin: 0 0 var(--space-2); }
+  .lead { color: var(--color-ink-muted); margin: 0 0 var(--space-6); max-inline-size: 60ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block-end: var(--space-6); }
+  .chip {
+    display: inline-flex; align-items: center; gap: var(--space-2);
+    padding: 0.45rem 0.9rem; border-radius: var(--radius-full);
+    background: var(--color-bg-elevated); border: 1px solid var(--color-border);
+    text-decoration: none; color: var(--color-ink); font-size: 0.9rem; font-weight: 500;
+  }
+  .chip .n { font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-ink-muted); }
+  .chip:hover { border-color: var(--color-forest); }
+  .chip.active { background: var(--color-forest); color: #fff; border-color: var(--color-forest); }
+  .chip.active .n { color: #fff; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+  h2 { font-size: 1.05rem; margin: 0 0 var(--space-4); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); }
+  th { font-size: 0.72rem; color: var(--color-ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.84rem; }
+  td a { color: var(--color-forest); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  td code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-ink-muted); }
+  .fix { font-family: var(--font-mono); font-size: 0.78rem; }
+  .empty { color: var(--color-ink-muted); font-size: 1.1rem; margin: 0; }
+  .embed-action { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-block-end: var(--space-5); }
+  #gen-emb {
+    padding: 0.5rem 1.1rem; border-radius: var(--radius-full); border: none;
+    background: var(--color-forest); color: #fff; font-weight: 600; font-size: 0.9rem; cursor: pointer;
+  }
+  #gen-emb:hover:not(:disabled) { background: var(--color-forest-hover); }
+  #gen-emb:disabled { opacity: 0.6; cursor: progress; }
+  .embed-result { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-ink-muted); }
+  .embed-hint { width: 100%; margin: 0; font-size: 0.8rem; color: var(--color-ink-muted); }
+  .pag { display: flex; align-items: center; gap: var(--space-4); margin-block-start: var(--space-5); font-family: var(--font-mono); font-size: 0.82rem; }
+  .pag a { color: var(--color-forest); text-decoration: none; }
+  .mono { font-family: var(--font-mono); color: var(--color-ink-muted); }
+</style>

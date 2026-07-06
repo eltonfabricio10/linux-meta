@@ -1,0 +1,80 @@
+---
+/**
+ * LawBand — §06 da home. Versão COMPACTA do contexto regulatório: 4 bandeiras,
+ * 1 linha cada, sem cards de multa. Situa o projeto sem liderar pelo medo.
+ * O detalhe completo (escopo, multas, fontes) vive em /why.
+ */
+import { localePath, type Locale } from '~/i18n';
+
+interface Props {
+  locale: Locale;
+}
+const { locale } = Astro.props;
+const isPt = locale === 'pt';
+
+const laws = [
+  { flag: '🇪🇺', name: isPt ? 'UE · Digital Services Act' : 'EU · Digital Services Act' },
+  { flag: '🇬🇧', name: isPt ? 'Reino Unido · Online Safety Act' : 'UK · Online Safety Act' },
+  { flag: '🇧🇷', name: isPt ? 'Brasil · ECA Digital' : 'Brazil · ECA Digital' },
+  { flag: '🇦🇺', name: isPt ? 'Austrália · idade mínima' : 'Australia · minimum age' },
+];
+---
+
+<div class="lawband">
+  <p class="lb-lead">{isPt
+    ? 'O mundo está padronizando metadados de software com idade, risco e origem mais claros. linux-meta é infraestrutura aberta para isso — não aconselhamento jurídico.'
+    : 'The world is standardizing software metadata with clearer age, risk and origin. linux-meta is open infrastructure for that — not legal advice.'}</p>
+  <ul class="lb-flags">
+    {laws.map((l) => (
+      <li><span class="lb-flag" aria-hidden="true">{l.flag}</span><span class="lb-name">{l.name}</span></li>
+    ))}
+  </ul>
+  <a class="lb-more" href={localePath(locale, '/why')}>{isPt ? 'Por que isto importa' : 'Why this matters'} →</a>
+</div>
+
+<style>
+  .lawband {
+    display: grid;
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-8);
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-xl);
+  }
+  .lb-lead {
+    margin: 0;
+    max-inline-size: 72ch;
+    color: var(--color-ink);
+    font-size: 1.02rem;
+    line-height: 1.6;
+  }
+  .lb-flags {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-6);
+  }
+  .lb-flags li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .lb-flag { font-size: 1.25rem; line-height: 1; }
+  .lb-name {
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--color-ink-muted);
+  }
+  .lb-more {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-forest);
+    text-decoration: none;
+  }
+  .lb-more:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+</style>

@@ -1,0 +1,132 @@
+---
+import Base from '~/layouts/Base.astro';
+import DisputeActions from '~/components/admin/DisputeActions';
+import TranslationApprove from '~/components/admin/TranslationApprove';
+import { getLocaleFromUrl, t, locales, localePath, format } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq, desc, and } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const disputes = await db
+  .select({
+    id: schema.dispute.id,
+    pkgName: schema.packageTable.name,
+    pkgSlug: schema.packageTable.slug,
+    suggestedAge: schema.dispute.suggestedAge,
+    reason: schema.dispute.reason,
+    createdAt: schema.dispute.createdAt,
+  })
+  .from(schema.dispute)
+  .innerJoin(schema.packageTable, eq(schema.dispute.packageId, schema.packageTable.id))
+  .where(eq(schema.dispute.status, 'open'))
+  .orderBy(desc(schema.dispute.createdAt))
+  .limit(50);
+
+const drafts = await db
+  .select({
+    packageId: schema.packageTranslation.packageId,
+    locale: schema.packageTranslation.locale,
+    pkgName: schema.packageTable.name,
+    summary: schema.packageTranslation.summary,
+  })
+  .from(schema.packageTranslation)
+  .innerJoin(schema.packageTable, eq(schema.packageTranslation.packageId, schema.packageTable.id))
+  .where(and(
+    eq(schema.packageTranslation.locale, locale),
+    eq(schema.packageTranslation.status, 'draft'),
+  ))
+  .orderBy(desc(schema.packageTranslation.updatedAt))
+  .limit(50);
+
+const actionLabels = {
+  approve: dict.admin.approve,
+  reject: dict.admin.reject,
+  publish: dict.admin.publish,
+  actionOk: dict.admin.actionOk,
+  actionFailed: dict.admin.actionFailed,
+};
+---
+
+<Base title={dict.admin.reviewTitle}>
+  <section class="wrap">
+    <div class="container-page">
+      <h1>{dict.admin.reviewTitle}</h1>
+      <div class="cols">
+        <section class="col">
+          <h2>{dict.admin.disputes}</h2>
+          {disputes.length === 0 ? (
+            <p class="empty">{dict.admin.noItems}</p>
+          ) : (
+            <ul class="items">
+              {disputes.map((d) => (
+                <li class="item">
+                  <div class="head">
+                    <a href={localePath(locale, `/p/${d.pkgSlug}`)} class="pkg">{d.pkgName}</a>
+                    <span class="badge">{dict.admin.suggestedAge}: {d.suggestedAge}+</span>
+                  </div>
+                  <p class="reason">{d.reason.slice(0, 240)}{d.reason.length > 240 ? '…' : ''}</p>
+                  <p class="meta">{format(dict.admin.submitted, { date: new Date(d.createdAt).toLocaleString(locale) })}</p>
+                  <DisputeActions client:load id={d.id} labels={actionLabels} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section class="col">
+          <h2>{dict.admin.drafts}</h2>
+          {drafts.length === 0 ? (
+            <p class="empty">{dict.admin.noItems}</p>
+          ) : (
+            <ul class="items">
+              {drafts.map((d) => (
+                <li class="item">
+                  <div class="head">
+                    <span class="pkg">{d.pkgName}</span>
+                    <span class="badge">{d.locale}</span>
+                  </div>
+                  <p class="reason">{(d.summary ?? '').slice(0, 240)}</p>
+                  <TranslationApprove client:load packageId={d.packageId} locale={d.locale} canPublish={hasRole(role, ['reviewer', 'admin'])} labels={actionLabels} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-8); }
+  h2 { font-size: 1.1rem; margin: 0 0 var(--space-4); color: var(--color-navy-900); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-8); }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .col { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+  .items { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
+  .item { padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); display: grid; gap: var(--space-3); }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
+  .pkg { font-weight: 600; color: var(--color-teal-700); text-decoration: none; }
+  .badge { font-size: 0.78rem; padding: 0.15rem 0.5rem; border-radius: var(--radius-full); background: var(--color-stone-100); color: var(--color-fg-muted); }
+  .reason { margin: 0; color: var(--color-fg); font-size: 0.95rem; }
+  .meta { margin: 0; font-size: 0.78rem; color: var(--color-fg-muted); }
+  .empty { color: var(--color-fg-muted); margin: 0; }
+</style>

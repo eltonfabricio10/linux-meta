@@ -1,0 +1,293 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath, defaultLocale } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { db, schema } from '~/lib/db';
+import { and, asc, desc, eq } from 'drizzle-orm';
+import DisputeMediator, { type DisputeStatus } from '~/components/admin/DisputeMediator.tsx';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const idParam = Astro.params.id;
+const id = idParam && /^\d+$/.test(idParam) ? Number(idParam) : NaN;
+if (!Number.isFinite(id) || id <= 0) return new Response(null, { status: 404 });
+
+const STRINGS = {
+  en: {
+    pageTitle: 'Dispute',
+    notFound: 'Dispute not found.',
+    backToList: 'Back to disputes',
+    claim: 'Claim',
+    suggested: 'Suggested age',
+    reason: 'Reason',
+    reporter: 'Reporter',
+    created: 'Created',
+    currentStatus: 'Status',
+    relatedPkg: 'Related package',
+    currentRatings: 'Current ratings on this package',
+    age: 'Age',
+    source: 'Source',
+    confidence: 'Confidence',
+    noRatings: 'No ratings recorded for this package yet.',
+    mediation: 'Mediation',
+    timeline: 'Timeline',
+    noTimeline: 'No mediation activity yet.',
+    addComment: 'Add comment',
+    commentPlaceholder: 'Internal note for the mediation thread…',
+    submitComment: 'Post comment',
+    changeStatus: 'Move status',
+    apply: 'Apply',
+    reasonLabel: 'Resolution reason',
+    resolve: 'Resolve dispute',
+    dismiss: 'Dismiss dispute',
+    resolveConfirm: 'Mark this dispute as resolved? This is final.',
+    dismissConfirm: 'Dismiss this dispute? This is final.',
+    ok: 'Saved',
+    errorPrefix: 'Error',
+    needReason: 'A resolution reason is required.',
+  },
+  pt: {
+    pageTitle: 'Disputa',
+    notFound: 'Disputa não encontrada.',
+    backToList: 'Voltar à lista',
+    claim: 'Reclamação',
+    suggested: 'Idade sugerida',
+    reason: 'Motivo',
+    reporter: 'Reportada por',
+    created: 'Criada',
+    currentStatus: 'Estado',
+    relatedPkg: 'Pacote relacionado',
+    currentRatings: 'Avaliações atuais deste pacote',
+    age: 'Idade',
+    source: 'Fonte',
+    confidence: 'Confiança',
+    noRatings: 'Sem avaliações registadas para este pacote.',
+    mediation: 'Mediação',
+    timeline: 'Cronologia',
+    noTimeline: 'Sem atividade de mediação ainda.',
+    addComment: 'Adicionar comentário',
+    commentPlaceholder: 'Nota interna para o fio de mediação…',
+    submitComment: 'Publicar comentário',
+    changeStatus: 'Alterar estado',
+    apply: 'Aplicar',
+    reasonLabel: 'Motivo da resolução',
+    resolve: 'Resolver disputa',
+    dismiss: 'Rejeitar disputa',
+    resolveConfirm: 'Marcar esta disputa como resolvida? Esta ação é final.',
+    dismissConfirm: 'Rejeitar esta disputa? Esta ação é final.',
+    ok: 'Guardado',
+    errorPrefix: 'Erro',
+    needReason: 'É necessário indicar um motivo.',
+  },
+} as const;
+const L = STRINGS[locale as keyof typeof STRINGS] ?? STRINGS[defaultLocale as keyof typeof STRINGS];
+
+const [d] = await db
+  .select({
+    id: schema.dispute.id,
+    packageId: schema.dispute.packageId,
+    packageName: schema.packageTable.name,
+    packageSlug: schema.packageTable.slug,
+    suggestedAge: schema.dispute.suggestedAge,
+    reason: schema.dispute.reason,
+    status: schema.dispute.status,
+    reporterEmail: schema.dispute.reporterEmail,
+    reporterUserId: schema.dispute.reporterUserId,
+    createdAt: schema.dispute.createdAt,
+    resolvedAt: schema.dispute.resolvedAt,
+    resolvedBy: schema.dispute.resolvedBy,
+  })
+  .from(schema.dispute)
+  .innerJoin(schema.packageTable, eq(schema.dispute.packageId, schema.packageTable.id))
+  .where(eq(schema.dispute.id, id))
+  .limit(1);
+
+const listHref = localePath(locale, '/admin/disputes');
+
+if (!d) {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><title>${L.notFound}</title><p>${L.notFound}</p>`,
+    { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  );
+}
+
+const ratings = await db
+  .select({
+    id: schema.rating.id,
+    source: schema.rating.source,
+    ageMin: schema.rating.ageMin,
+    confidence: schema.rating.confidence,
+    rationale: schema.rating.rationale,
+    createdAt: schema.rating.createdAt,
+  })
+  .from(schema.rating)
+  .where(eq(schema.rating.packageId, d.packageId))
+  .orderBy(desc(schema.rating.createdAt))
+  .limit(20);
+
+const timeline = await db
+  .select({
+    id: schema.auditLog.id,
+    actor: schema.auditLog.actor,
+    action: schema.auditLog.action,
+    at: schema.auditLog.at,
+    after: schema.auditLog.after,
+    before: schema.auditLog.before,
+  })
+  .from(schema.auditLog)
+  .where(and(eq(schema.auditLog.entityType, 'dispute'), eq(schema.auditLog.entityId, String(d.id))))
+  .orderBy(asc(schema.auditLog.at))
+  .limit(200);
+
+const status = d.status as DisputeStatus;
+
+function fmtTimelineDetail(action: string, after: unknown, before: unknown): string {
+  if (action === 'dispute.comment') {
+    const t = (after as { text?: string } | null)?.text;
+    return t ?? '';
+  }
+  if (action === 'dispute.status.update') {
+    const b = (before as { status?: string } | null)?.status ?? '?';
+    const a = (after as { status?: string } | null)?.status ?? '?';
+    return `${b} → ${a}`;
+  }
+  if (action === 'dispute.resolve' || action === 'dispute.dismiss') {
+    const r = (after as { reason?: string } | null)?.reason;
+    return r ?? '';
+  }
+  return '';
+}
+function provKind(source: string): 'imported' | 'ai' | 'human' {
+  const s = source.toLowerCase();
+  if (s.startsWith('ai_') || s.includes('claude') || s.includes('codex') || s.includes('gpt') || s.includes('llm')) return 'ai';
+  if (s === 'human' || s.startsWith('human_') || s.includes('reviewer') || s.includes('user')) return 'human';
+  return 'imported';
+}
+---
+<Base title={`${L.pageTitle} #${d.id} · ${dict.admin.adminTitle}`}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs"><a href={localePath(locale, '/admin')}>{dict.admin.navAdmin}</a> / <a href={listHref}>{dict.admin.disputes}</a> / #{d.id}</p>
+      <h1>{L.pageTitle} #{d.id}</h1>
+
+      <div class="grid">
+        <article class="card">
+          <h2>{L.claim}</h2>
+          <dl>
+            <dt>{L.relatedPkg}</dt>
+            <dd><a href={`/p/${d.packageSlug}`}>{d.packageName}</a></dd>
+            <dt>{L.suggested}</dt>
+            <dd>{d.suggestedAge}+</dd>
+            <dt>{L.reason}</dt>
+            <dd class="multiline">{d.reason}</dd>
+            <dt>{L.reporter}</dt>
+            <dd class="mono">{d.reporterEmail ?? d.reporterUserId ?? '—'}</dd>
+            <dt>{L.created}</dt>
+            <dd>{new Date(d.createdAt).toLocaleString()}</dd>
+            <dt>{L.currentStatus}</dt>
+            <dd><span class={`badge status-${status}`}>{status}</span></dd>
+          </dl>
+        </article>
+
+        <article class="card">
+          <h2>{L.currentRatings}</h2>
+          {ratings.length === 0 ? (
+            <p class="empty">{L.noRatings}</p>
+          ) : (
+            <table>
+              <thead><tr><th class="num">{L.age}</th><th>{L.source}</th><th class="num">{L.confidence}</th><th>{L.created}</th></tr></thead>
+              <tbody>
+                {ratings.map((r) => (
+                  <tr>
+                    <td class="num">{r.ageMin}+</td>
+                    <td><span class={`prov prov-${provKind(r.source)}`}>{r.source}</span></td>
+                    <td class="num">{r.confidence.toFixed(2)}</td>
+                    <td>{new Date(r.createdAt).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </article>
+
+        <article class="card span">
+          <h2>{L.timeline}</h2>
+          {timeline.length === 0 ? (
+            <p class="empty">{L.noTimeline}</p>
+          ) : (
+            <ol class="timeline">
+              {timeline.map((entry) => (
+                <li>
+                  <div class="t-head">
+                    <span class="t-action">{entry.action}</span>
+                    <span class="t-actor mono">{entry.actor ?? 'system'}</span>
+                    <time>{new Date(entry.at).toLocaleString()}</time>
+                  </div>
+                  <p class="t-body">{fmtTimelineDetail(entry.action, entry.after, entry.before)}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </article>
+
+        <article class="card span">
+          <h2>{L.mediation}</h2>
+          <DisputeMediator client:load id={d.id} status={status} labels={L} />
+        </article>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-6); }
+  h2 { font-size: 1.05rem; margin: 0 0 var(--space-4); color: var(--color-navy-900); }
+  .crumbs { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-size: 0.9rem; }
+  .crumbs a { color: inherit; text-decoration: underline; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+  .card.span { grid-column: 1 / -1; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .card.span { grid-column: auto; } }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin: 0; }
+  dt { color: var(--color-fg-muted); font-size: 0.85rem; }
+  dd { margin: 0; }
+  dd.multiline { white-space: pre-wrap; }
+  .mono { font-family: var(--font-mono, monospace); font-size: 0.85em; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); }
+  th { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--color-fg-muted); margin: 0; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: var(--radius-full); font-size: 0.78rem; font-weight: 600; }
+  .status-open { background: var(--color-amber-100, #fcefc7); color: var(--color-amber-800, #7c4b00); }
+  .status-reviewing { background: var(--color-teal-100, #d2efee); color: var(--color-teal-800, #07484a); }
+  .status-resolved { background: var(--color-sage-100, #d8e8d4); color: var(--color-sage-700, #355c2b); }
+  .status-rejected { background: var(--color-terra-100, #f7e1dc); color: var(--color-terra-800, #6e2a1d); }
+  .prov { display: inline-block; padding: 0.1rem 0.5rem; border-radius: var(--radius-full); font-size: 0.78rem; font-weight: 600; }
+  .prov-imported { background: var(--color-teal-100, #d2efee); color: var(--color-teal-800, #07484a); }
+  .prov-ai { background: var(--color-amber-100, #fcefc7); color: var(--color-amber-800, #7c4b00); }
+  .prov-human { background: var(--color-sage-100, #d8e8d4); color: var(--color-sage-700, #355c2b); }
+  .timeline { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+  .timeline li { border-inline-start: 3px solid var(--color-border); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-subtle, transparent); }
+  .t-head { display: flex; gap: var(--space-3); align-items: baseline; flex-wrap: wrap; font-size: 0.85rem; }
+  .t-action { font-weight: 600; }
+  .t-actor { color: var(--color-fg-muted); }
+  .t-head time { margin-inline-start: auto; color: var(--color-fg-muted); }
+  .t-body { margin: 0.3rem 0 0; white-space: pre-wrap; }
+</style>

@@ -1,0 +1,273 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { getUserRole, hasRole, type Role } from '~/lib/roles';
+import UserDetail, { type DetailUser, type SessionRow } from '~/components/admin/UserDetail';
+import type { AuditEntry } from '~/components/admin/AuditTable';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+const actorRole = await getUserRole(Astro.locals.user.id);
+if (!hasRole(actorRole, ['admin'])) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+
+const targetId = Astro.params.id;
+if (!targetId) return new Response(null, { status: 404 });
+
+const [userRow] = await db
+  .select({
+    id: schema.user.id,
+    name: schema.user.name,
+    email: schema.user.email,
+    role: schema.user.role,
+    banned: schema.user.banned,
+    bannedReason: schema.user.bannedReason,
+    bannedAt: schema.user.bannedAt,
+    emailVerified: schema.user.emailVerified,
+    createdAt: schema.user.createdAt,
+  })
+  .from(schema.user)
+  .where(eq(schema.user.id, targetId))
+  .limit(1);
+
+if (!userRow) return new Response('Not found', { status: 404 });
+
+const sessionRows = await db
+  .select({
+    id: schema.session.id,
+    ipAddress: schema.session.ipAddress,
+    userAgent: schema.session.userAgent,
+    createdAt: schema.session.createdAt,
+    expiresAt: schema.session.expiresAt,
+  })
+  .from(schema.session)
+  .where(and(eq(schema.session.userId, targetId), gt(schema.session.expiresAt, sql`now()`)))
+  .orderBy(desc(schema.session.createdAt))
+  .limit(100);
+
+const auditRows = await db
+  .select({
+    id: schema.auditLog.id,
+    actor: schema.auditLog.actor,
+    actorEmail: schema.user.email,
+    action: schema.auditLog.action,
+    entityType: schema.auditLog.entityType,
+    entityId: schema.auditLog.entityId,
+    before: schema.auditLog.before,
+    after: schema.auditLog.after,
+    at: schema.auditLog.at,
+  })
+  .from(schema.auditLog)
+  .leftJoin(schema.user, eq(schema.auditLog.actor, schema.user.id))
+  .where(and(eq(schema.auditLog.entityType, 'user'), eq(schema.auditLog.entityId, targetId)))
+  .orderBy(desc(schema.auditLog.at))
+  .limit(50);
+
+const detailUser: DetailUser = {
+  id: userRow.id,
+  name: userRow.name,
+  email: userRow.email,
+  role: userRow.role as Role,
+  banned: userRow.banned,
+  bannedReason: userRow.bannedReason,
+  bannedAt: userRow.bannedAt ? userRow.bannedAt.toISOString() : null,
+  emailVerified: userRow.emailVerified,
+  createdAt: userRow.createdAt.toISOString(),
+};
+
+const sessions: SessionRow[] = sessionRows.map((s) => ({
+  id: s.id,
+  ipAddress: s.ipAddress,
+  userAgent: s.userAgent,
+  createdAt: s.createdAt.toISOString(),
+  expiresAt: s.expiresAt.toISOString(),
+}));
+
+const audit: AuditEntry[] = auditRows.map((a) => ({
+  id: a.id,
+  actor: a.actor,
+  actorEmail: a.actorEmail,
+  action: a.action,
+  entityType: a.entityType,
+  entityId: a.entityId,
+  before: a.before,
+  after: a.after,
+  at: a.at.toISOString(),
+}));
+
+const labels = locale === 'pt'
+  ? {
+      backToUsers: '← Voltar para usuários',
+      pageTitle: `Usuário ${detailUser.email}`,
+      verified: 'E-mail verificado',
+      unverified: 'E-mail não verificado',
+      bannedSince: 'Banido em',
+      createdAt: 'Criado em',
+      idLabel: 'ID',
+      detail: {
+        roleLabel: 'Papel',
+        banLabel: 'Banimento',
+        banReasonLabel: 'Motivo do banimento',
+        banReasonPlaceholder: 'Descreva o motivo (visível só para administradores)',
+        banToggleOn: 'Usuário banido',
+        banToggleOff: 'Usuário ativo',
+        saveRole: 'Salvar papel',
+        saveBan: 'Salvar banimento',
+        revokeSessions: 'Revogar todas as sessões',
+        revokeSessionsConfirm: 'Encerrar todas as sessões deste usuário?',
+        banConfirm: 'Banir este usuário? Todas as sessões serão encerradas.',
+        selfDemoteBlocked: 'Você não pode rebaixar seu próprio papel de admin.',
+        sessionsTitle: 'Sessões ativas',
+        sessionsEmpty: 'Sem sessões ativas.',
+        sessionId: 'ID',
+        sessionIp: 'IP',
+        sessionAgent: 'Agente',
+        sessionCreated: 'Criada',
+        sessionExpires: 'Expira',
+        auditTitle: 'Atividade recente (auditoria)',
+        busy: 'Salvando…',
+        ok: 'Atualizado',
+        fail: 'Falha',
+        roles: {
+          visitor: 'Visitante',
+          contributor: 'Colaborador',
+          translator: 'Tradutor',
+          reviewer: 'Revisor',
+          admin: 'Admin',
+        },
+        audit: {
+          when: 'Quando',
+          actor: 'Ator',
+          action: 'Ação',
+          entity: 'Entidade',
+          changes: 'Alterações',
+          empty: 'Sem registros de auditoria para este usuário.',
+          before: 'Antes',
+          after: 'Depois',
+        },
+      },
+    }
+  : {
+      backToUsers: '← Back to users',
+      pageTitle: `User ${detailUser.email}`,
+      verified: 'Email verified',
+      unverified: 'Email not verified',
+      bannedSince: 'Banned at',
+      createdAt: 'Created',
+      idLabel: 'ID',
+      detail: {
+        roleLabel: 'Role',
+        banLabel: 'Ban',
+        banReasonLabel: 'Ban reason',
+        banReasonPlaceholder: 'Reason (admin-visible only)',
+        banToggleOn: 'User is banned',
+        banToggleOff: 'User is active',
+        saveRole: 'Save role',
+        saveBan: 'Save ban',
+        revokeSessions: 'Revoke all sessions',
+        revokeSessionsConfirm: 'End all sessions for this user?',
+        banConfirm: 'Ban this user? All sessions will be terminated.',
+        selfDemoteBlocked: 'You cannot demote your own admin role.',
+        sessionsTitle: 'Active sessions',
+        sessionsEmpty: 'No active sessions.',
+        sessionId: 'ID',
+        sessionIp: 'IP',
+        sessionAgent: 'Agent',
+        sessionCreated: 'Created',
+        sessionExpires: 'Expires',
+        auditTitle: 'Recent activity (audit)',
+        busy: 'Saving…',
+        ok: 'Updated',
+        fail: 'Failed',
+        roles: {
+          visitor: 'Visitor',
+          contributor: 'Contributor',
+          translator: 'Translator',
+          reviewer: 'Reviewer',
+          admin: 'Admin',
+        },
+        audit: {
+          when: 'When',
+          actor: 'Actor',
+          action: 'Action',
+          entity: 'Entity',
+          changes: 'Changes',
+          empty: 'No audit entries for this user yet.',
+          before: 'Before',
+          after: 'After',
+        },
+      },
+    };
+---
+
+<Base title={labels.pageTitle}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="back"><a href={`/${locale}/admin/users`}>{labels.backToUsers}</a></p>
+      <header class="head">
+        <h1>{detailUser.name || detailUser.email}</h1>
+        <p class="meta">
+          <span class="mono">{detailUser.email}</span>
+          <span class="dot">•</span>
+          <span class={detailUser.emailVerified ? 'ok' : 'warn'}>
+            {detailUser.emailVerified ? labels.verified : labels.unverified}
+          </span>
+        </p>
+        <dl class="kv">
+          <dt>{labels.idLabel}</dt><dd class="mono">{detailUser.id}</dd>
+          <dt>{labels.createdAt}</dt><dd class="mono">{detailUser.createdAt.slice(0, 19).replace('T', ' ')}</dd>
+          {detailUser.bannedAt && (
+            <>
+              <dt>{labels.bannedSince}</dt>
+              <dd class="mono">{detailUser.bannedAt.slice(0, 19).replace('T', ' ')}</dd>
+            </>
+          )}
+        </dl>
+      </header>
+
+      <UserDetail
+        client:load
+        user={detailUser}
+        sessions={sessions}
+        recentAudit={audit}
+        labels={labels.detail}
+        currentUserId={Astro.locals.user.id}
+      />
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .back { margin: 0 0 var(--space-4); }
+  .back a { color: var(--color-fg-muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .head { margin-block-end: var(--space-6); }
+  h1 { margin: 0; }
+  .meta { color: var(--color-fg-muted); margin: var(--space-2) 0 var(--space-4); display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+  .mono { font-family: var(--font-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+  .dot { opacity: 0.6; }
+  .ok { color: var(--color-sage-600); }
+  .warn { color: var(--color-terra-600); }
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .kv dt { color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72rem; align-self: center; }
+  .kv dd { margin: 0; }
+</style>

@@ -1,0 +1,266 @@
+/** Translate worker.
+ *
+ *  For each candidate package: builds prompt from English source, invokes CLI,
+ *  parses JSON keyed by locale, upserts package_translation rows
+ *  with status='draft' and translated_by='ai_claude_code'.
+ *
+ *  Env:
+ *    LIMIT          = how many packages per run                (default 25)
+ *    LOCALES        = comma-sep target locales                 (default 'pt,es,de,fr,it,ja')
+ *    CLI            = 'claude'|'codex'                         (default 'claude')
+ *    MODEL          = model alias                              (default 'haiku')
+ *    CONCURRENCY    = parallel CLI invocations                 (default 1)
+ *    MIN_POPULARITY = skip pkgs below this popularity          (default 0)
+ *    DRY_RUN        = if set, no DB writes
+ */
+
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { sql } from 'drizzle-orm';
+import { db, schema } from '@linux-meta/db';
+import { callCli, extractJson, type CliKind } from './cli-driver.ts';
+import { validate } from './validate.ts';
+
+const LIMIT = Math.max(1, Number(process.env.LIMIT ?? 25));
+const LOCALES = (process.env.LOCALES ?? 'pt,es,de,fr,it,ja')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const CLI = (process.env.CLI ?? 'claude') as CliKind;
+const MODEL = process.env.MODEL ?? 'haiku';
+const CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.CONCURRENCY ?? 1)));
+const MIN_POP = Number(process.env.MIN_POPULARITY ?? 0);
+/* Shard split for parallelism: ID_MOD_N=4 ID_MOD_K=0..3 → each shard picks
+ * candidates where (id % N) = K. Use to fan out N workers across N agents. */
+const ID_MOD_N = Number(process.env.ID_MOD_N ?? 0);
+const ID_MOD_K = Number(process.env.ID_MOD_K ?? 0);
+const DRY = process.env.DRY_RUN === '1' || process.env.DRY_RUN === 'true';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const promptTemplate = await readFile(resolve(here, '../prompts/translate-package.md'), 'utf8');
+
+type Candidate = {
+  id: number;
+  name: string;
+  summary: string | null;
+  description: string | null;
+  missingLocales: string[];
+};
+
+async function pickCandidates(): Promise<Candidate[]> {
+  /* Pick packages that have at least a source `summary` AND are missing at
+     least one of the requested locales. Priority order:
+       1. Packages where source description is missing or short (<350 chars).
+          These benefit most from AI expansion — typical AUR/Manjaro/Debian.
+       2. Then by popularity DESC, then id ASC for determinism.
+     We compute `missing` per-row so the worker only requests what's needed. */
+  const localesSql = sql.raw(`ARRAY[${LOCALES.map((l) => `'${l.replace(/'/g, "''")}'`).join(',')}]::text[]`);
+
+  return db.execute<{
+    id: number;
+    name: string;
+    summary: string | null;
+    description: string | null;
+    missing: string[];
+  }>(sql`
+    WITH src AS (
+      SELECT
+        p.id,
+        p.name,
+        p.popularity,
+        COALESCE(en.summary,     p.raw_metadata->>'desc') AS summary,
+        COALESCE(en.description, p.raw_metadata->>'description') AS description
+      FROM package p
+      LEFT JOIN package_translation en
+        ON en.package_id = p.id AND en.locale = 'en'
+      WHERE p.popularity >= ${MIN_POP}
+    ),
+    have AS (
+      SELECT package_id, ARRAY_AGG(locale) AS locales
+      FROM package_translation
+      WHERE locale = ANY(${localesSql})
+        AND COALESCE(summary, description) IS NOT NULL
+      GROUP BY package_id
+    )
+    SELECT
+      src.id, src.name, src.summary, src.description,
+      (SELECT ARRAY_AGG(l) FROM UNNEST(${localesSql}) AS l
+       WHERE l <> ALL(COALESCE(have.locales, ARRAY[]::text[]))
+      ) AS missing
+    FROM src
+    LEFT JOIN have ON have.package_id = src.id
+    WHERE src.summary IS NOT NULL
+      AND (SELECT COUNT(*) FROM UNNEST(${localesSql}) AS l
+           WHERE l <> ALL(COALESCE(have.locales, ARRAY[]::text[]))) > 0
+      ${ID_MOD_N > 0 ? sql`AND (src.id % ${ID_MOD_N}) = ${ID_MOD_K}` : sql``}
+    ORDER BY
+      (CASE WHEN src.description IS NULL OR length(src.description) < 350 THEN 0 ELSE 1 END),
+      src.popularity DESC,
+      src.id ASC
+    LIMIT ${LIMIT}
+  `).then((rows) => rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    summary: r.summary,
+    description: r.description,
+    missingLocales: r.missing ?? [],
+  })));
+}
+
+function buildPrompt(c: Candidate): string {
+  const parts = [
+    promptTemplate,
+    `name: ${c.name}`,
+    `target_locales: ${c.missingLocales.join(', ')}`,
+  ];
+  if (c.summary) parts.push(`summary: ${c.summary}`);
+  if (c.description && c.description !== c.summary) {
+    parts.push(`description: ${truncate(c.description, 2400)}`);
+  } else {
+    parts.push(`description: (none — source is summary-only, EXPAND in expanded_en if you know this package)`);
+  }
+  parts.push('', `Return JSON with keys: source_quality, expanded_en, translations (with these locales: ${c.missingLocales.join(', ')}).`);
+  return parts.join('\n');
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + '…';
+}
+
+async function translateOne(c: Candidate) {
+  const prompt = buildPrompt(c);
+  const cli = await callCli(prompt, { kind: CLI, model: MODEL });
+  if (!cli.ok) return { ok: false as const, c, reason: cli.error, ms: cli.durationMs };
+
+  const parsed = extractJson(cli.text);
+  if (parsed == null) {
+    return { ok: false as const, c, reason: `no json: ${cli.text.slice(0, 200)}`, ms: cli.durationMs, cost: cli.costUsd };
+  }
+
+  const v = validate(parsed, c.missingLocales);
+  if ('error' in v) return { ok: false as const, c, reason: v.error, ms: cli.durationMs, cost: cli.costUsd };
+  return { ok: true as const, c, validated: v, ms: cli.durationMs, cost: cli.costUsd };
+}
+
+import type { Validated } from './validate.ts';
+const TRANSLATED_BY = CLI === 'claude' ? 'ai_claude_code' : 'ai_codex';
+
+async function writeTranslations(pkgId: number, v: Validated, sourceSummary: string | null) {
+  /* Write per-locale translations + (optionally) an AI-expanded en row when the
+   * source description was insufficient. The en row carries the AppStream-quality
+   * factual expansion, tagged with `translated_by = ai_*` and status='draft' so it
+   * never gets confused with upstream-imported en metainfo (translated_by='upstream'). */
+  const rows = Object.entries(v.translations).map(([locale, val]) => ({
+    packageId: pkgId,
+    locale,
+    summary: val.summary,
+    description: val.description,
+    plainExplanation: val.plain,
+    translatedBy: TRANSLATED_BY,
+    status: 'draft' as const,
+    updatedAt: new Date(),
+  }));
+
+  if (v.expandedEn) {
+    /* If 'en' was in the requested locales the model already produced an `en` translation
+     * row. Replace its description with the canonical expanded_en (richer, AppStream-quality)
+     * and keep its summary/plain. Otherwise insert a new en row. */
+    const existing = rows.find((r) => r.locale === 'en');
+    if (existing) {
+      existing.description = v.expandedEn;
+    } else {
+      rows.push({
+        packageId: pkgId,
+        locale: 'en',
+        summary: sourceSummary,
+        description: v.expandedEn,
+        plainExplanation: null,
+        translatedBy: TRANSLATED_BY,
+        status: 'draft' as const,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  if (rows.length === 0) return;
+  await db
+    .insert(schema.packageTranslation)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [schema.packageTranslation.packageId, schema.packageTranslation.locale],
+      /* Never overwrite an upstream-sourced row with an AI-generated one. */
+      where: sql`package_translation.translated_by NOT IN ('upstream') AND package_translation.status <> 'official'`,
+      set: {
+        summary: sql`excluded.summary`,
+        description: sql`excluded.description`,
+        plainExplanation: sql`excluded.plain_explanation`,
+        translatedBy: sql`excluded.translated_by`,
+        status: sql`excluded.status`,
+        updatedAt: sql`now()`,
+      },
+    });
+}
+
+async function pool<T, U>(items: T[], n: number, fn: (x: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = [];
+  let i = 0;
+  const w = async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, w));
+  return out;
+}
+
+async function main(): Promise<void> {
+  const t0 = Date.now();
+  const candidates = await pickCandidates();
+  process.stderr.write(
+    `[translate] candidates=${candidates.length} locales=${LOCALES.join(',')} cli=${CLI} model=${MODEL} conc=${CONCURRENCY} dry=${DRY}\n`,
+  );
+  if (candidates.length === 0) {
+    process.stderr.write(`[translate] nothing to do.\n`);
+    process.exit(0);
+  }
+
+  let ok = 0, fail = 0, locales = 0, cost = 0;
+  await pool(candidates, CONCURRENCY, async (c) => {
+    const r = await translateOne(c);
+    const s = (r.ms / 1000).toFixed(1);
+    if (r.ok) {
+      const keys = Object.keys(r.validated.translations).join(',');
+      ok++;
+      locales += Object.keys(r.validated.translations).length;
+      if (typeof r.cost === 'number') cost += r.cost;
+      const expandedTag = r.validated.expandedEn ? ' +expanded_en' : '';
+      process.stderr.write(`[translate] ✓ id=${c.id} ${c.name} → [${keys}]${expandedTag} (sq=${r.validated.sourceQuality}) ${s}s\n`);
+      if (!DRY) await writeTranslations(c.id, r.validated, c.summary);
+    } else {
+      fail++;
+      process.stderr.write(`[translate] ✗ id=${c.id} ${c.name}: ${r.reason} (${s}s)\n`);
+    }
+  });
+
+  await db.insert(schema.auditLog).values({
+    actor: 'system',
+    action: 'translate_run',
+    entityType: 'translate',
+    after: {
+      cli: CLI, model: MODEL, locales: LOCALES,
+      attempted: candidates.length, ok, fail, localesWritten: locales,
+      costUsd: cost, durationMs: Date.now() - t0, dry: DRY,
+    },
+  });
+
+  process.stderr.write(
+    `[translate] DONE ok=${ok} fail=${fail} locales=${locales} cost=$${cost.toFixed(4)} in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`,
+  );
+  process.exit(fail > 0 && ok === 0 ? 1 : 0);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

@@ -1,0 +1,99 @@
+---
+import Base from '~/layouts/Base.astro';
+import ProseContainer from '~/components/layout/ProseContainer.astro';
+import RuleDivider from '~/components/layout/RuleDivider.astro';
+import { getLocaleFromUrl, t, locales } from '~/i18n';
+import { meta } from '~/i18n/meta';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+void t(locale);
+const m = meta(locale).about;
+const isPt = locale === 'pt';
+---
+
+<Base title={m.title} description={m.intro}>
+  <ProseContainer>
+    <p class="kicker">§ {isPt ? 'Sobre' : 'About'}</p>
+    <h1>{m.title}</h1>
+    <p class="lead">{m.intro}</p>
+
+    <RuleDivider tone="ink" variant="thin" />
+
+    <h2>{m.missionTitle}</h2>
+    <p>{m.missionBody}</p>
+
+    <h2>{m.valuesTitle}</h2>
+    <p>{m.valuesBody}</p>
+
+    <h2>{m.governanceTitle}</h2>
+    <p>{m.governanceBody}</p>
+
+    <h2>{m.originTitle}</h2>
+    <p>{m.originBody}</p>
+
+    <RuleDivider tone="terracotta" variant="wave" />
+
+    <h2>{m.stateTitle}</h2>
+    <p>{m.stateIntro}</p>
+    <p><a href={`/${locale}/transparency`}>{isPt ? 'Veja a página de transparência →' : 'See the transparency page →'}</a></p>
+
+    <h2>{m.gapsTitle}</h2>
+    <ul class="gaps">
+      {m.gapsList.map((g) => <li>{g}</li>)}
+    </ul>
+  </ProseContainer>
+</Base>
+
+<style>
+  :global(.container-prose), :global(.prose-container) {
+    padding-block: var(--space-12) var(--space-16);
+  }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--color-terracotta);
+    margin: 0 0 var(--space-3);
+  }
+  h1 {
+    margin: 0 0 var(--space-4);
+  }
+  .lead {
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 1.15rem;
+    line-height: 1.55;
+    color: var(--color-ink);
+    margin-block-end: var(--space-8);
+    max-inline-size: 62ch;
+  }
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.5rem;
+    margin: var(--space-10) 0 var(--space-3);
+    color: var(--color-ink);
+  }
+  p { font-family: var(--font-sans); line-height: 1.65; color: var(--color-ink); max-inline-size: 62ch; }
+  ul.gaps {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-4) 0;
+    display: grid;
+    gap: 0;
+  }
+  ul.gaps li {
+    padding: var(--space-3) var(--space-4) var(--space-3) var(--space-4);
+    border-inline-start: 3px solid var(--color-terracotta);
+    border-block-end: 1px dashed var(--color-rule);
+    line-height: 1.5;
+    background: transparent;
+  }
+  ul.gaps li:last-child { border-block-end: none; }
+</style>

@@ -1,0 +1,83 @@
+---
+/**
+ * ScreenshotGallery — horizontal strip of published screenshots for a package.
+ * Renders nothing when none are published (structure exists, data may be empty).
+ */
+import type { Locale } from '~/i18n';
+
+interface Shot {
+  url: string;
+  caption?: string | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+interface Props {
+  locale: Locale;
+  screenshots: Shot[];
+}
+
+const { locale, screenshots } = Astro.props;
+const isPt = locale === 'pt';
+---
+
+{screenshots.length > 0 && (
+  <section class="shots" aria-label={isPt ? 'Capturas de tela' : 'Screenshots'}>
+    <h2 class="shots-h">{isPt ? 'Capturas de tela' : 'Screenshots'}</h2>
+    <ol class="shots-strip">
+      {screenshots.map((s) => (
+        <li class="shot">
+          <img
+            src={s.url}
+            alt={s.caption ?? (isPt ? 'Captura de tela' : 'Screenshot')}
+            width={s.width ?? undefined}
+            height={s.height ?? undefined}
+            loading="lazy"
+            decoding="async"
+          />
+          {s.caption && <figcaption>{s.caption}</figcaption>}
+        </li>
+      ))}
+    </ol>
+  </section>
+)}
+
+<style>
+  .shots { margin-block: var(--space-2); }
+  .shots-h {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.4rem;
+    margin: 0 0 var(--space-4);
+    color: var(--color-ink);
+  }
+  .shots-strip {
+    list-style: none;
+    padding: 0 0 var(--space-3);
+    margin: 0;
+    display: flex;
+    gap: var(--space-4);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+  .shot {
+    flex: 0 0 auto;
+    max-inline-size: min(80vw, 520px);
+    scroll-snap-align: start;
+  }
+  .shot img {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-rule);
+    box-shadow: var(--shadow-card);
+    background: var(--color-paper-elev);
+  }
+  .shot figcaption {
+    margin-block-start: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-ink-muted);
+    line-height: 1.45;
+  }
+</style>

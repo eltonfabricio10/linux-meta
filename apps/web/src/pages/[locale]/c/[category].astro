@@ -1,0 +1,17 @@
+---
+/* Vanity route: /{locale}/c/{category} -> faceted browse for that category.
+ * Clean, shareable, SEO-friendly URL that resolves to the existing browse page. */
+import { locales } from '~/i18n';
+import { taxonomy } from '~/lib/categories';
+
+export const prerender = false;
+
+const { locale, category } = Astro.params;
+if (!locale || !(locales as readonly string[]).includes(locale)) {
+  return new Response(null, { status: 404 });
+}
+const cat = taxonomy.find((c) => c.slug === category);
+if (!cat) return new Response(null, { status: 404 });
+
+return Astro.redirect(`/${locale}/browse?category=${cat.slug}`, 302);
+---

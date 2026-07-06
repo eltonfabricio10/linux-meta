@@ -1,0 +1,64 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales } from '~/i18n';
+import { meta } from '~/i18n/meta';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+void t(locale);
+const m = meta(locale).partners;
+---
+
+<Base title={m.title} description={m.intro}>
+  <section class="wrap">
+    <div class="container-prose">
+      <h1>{m.title}</h1>
+      <p class="lead">{m.intro}</p>
+
+      <article class="block">
+        <h2>{m.openTitle}</h2>
+        <p>{m.openBody}</p>
+      </article>
+
+      <article class="block">
+        <h2>{m.criteriaTitle}</h2>
+        <p>{m.criteriaBody}</p>
+      </article>
+
+      <p class="cta-wrap">
+        <a class="btn" href="https://github.com" rel="noopener external" data-disabled-link>
+          {m.ctaContact} <span aria-hidden="true">↗</span>
+        </a>
+        <small class="hint">
+          {locale === 'pt'
+            ? 'Link ativado quando o repositório for tornado público.'
+            : 'Link enabled once the repository is made public.'}
+        </small>
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-16); }
+  h1 { margin: 0 0 var(--space-4); }
+  .lead { font-size: var(--text-lg); color: var(--color-fg-muted); margin-block-end: var(--space-10); max-inline-size: 60ch; }
+  .block { margin-block-end: var(--space-10); }
+  .block h2 { font-size: var(--text-2xl); margin: 0 0 var(--space-3); }
+  .cta-wrap { display: flex; flex-direction: column; gap: var(--space-3); margin-block-start: var(--space-8); }
+  .btn {
+    align-self: flex-start;
+    padding: 0.7rem 1.4rem;
+    border-radius: var(--radius-full);
+    background: var(--color-navy-900);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    pointer-events: none;
+    opacity: 0.6;
+  }
+  .hint { font-size: var(--text-sm); color: var(--color-fg-muted); font-style: italic; }
+</style>

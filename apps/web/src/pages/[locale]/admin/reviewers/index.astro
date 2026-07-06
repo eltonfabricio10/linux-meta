@@ -1,0 +1,86 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath, defaultLocale } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+import ReviewerTable from '~/components/admin/ReviewerTable.tsx';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+// Inline labels — no shared dict keys to avoid touching pt.json/en.json.
+const STRINGS = {
+  en: {
+    pageTitle: 'Reviewers',
+    intro: 'Reviewer onboarding queue — current reviewers plus candidates from the contributor and translator pools.',
+    loading: 'Loading reviewers…',
+    empty: 'No reviewer candidates yet.',
+    errorPrefix: 'Failed',
+    name: 'Name',
+    email: 'Email',
+    currentRole: 'Role',
+    ratingsReviewed: 'Ratings reviewed (90d)',
+    disputesMediated: 'Disputes mediated',
+    lastActivity: 'Last activity',
+    changeRole: 'Change role',
+    apply: 'Apply',
+    promoted: 'Updated',
+    never: 'Never',
+    confirmDemote: 'Confirm role change downwards?',
+  },
+  pt: {
+    pageTitle: 'Revisores',
+    intro: 'Fila de integração de revisores — revisores atuais e candidatos vindos dos pools de contribuidores e tradutores.',
+    loading: 'A carregar revisores…',
+    empty: 'Sem candidatos a revisor.',
+    errorPrefix: 'Falha',
+    name: 'Nome',
+    email: 'E-mail',
+    currentRole: 'Papel',
+    ratingsReviewed: 'Avaliações revistas (90d)',
+    disputesMediated: 'Disputas mediadas',
+    lastActivity: 'Última atividade',
+    changeRole: 'Alterar papel',
+    apply: 'Aplicar',
+    promoted: 'Atualizado',
+    never: 'Nunca',
+    confirmDemote: 'Confirmar despromoção?',
+  },
+} as const;
+const L = STRINGS[locale as keyof typeof STRINGS] ?? STRINGS[defaultLocale as keyof typeof STRINGS];
+const backHref = localePath(locale, '/admin');
+---
+<Base title={`${L.pageTitle} · ${dict.admin.adminTitle}`}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs"><a href={backHref}>{dict.admin.navAdmin}</a> / {L.pageTitle}</p>
+      <h1>{L.pageTitle}</h1>
+      <p class="intro">{L.intro}</p>
+      <article class="card">
+        <ReviewerTable client:load labels={L} />
+      </article>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-3); }
+  .intro { color: var(--color-fg-muted); margin: 0 0 var(--space-6); max-width: 60ch; }
+  .crumbs { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-size: 0.9rem; }
+  .crumbs a { color: inherit; text-decoration: underline; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+</style>

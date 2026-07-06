@@ -1,0 +1,212 @@
+---
+import Base from '~/layouts/Base.astro';
+import TranslationEditor from '~/components/admin/TranslationEditor';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq, and, sql } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['translator', 'reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const targetLocale = Astro.url.searchParams.get('locale') ?? (locale === 'en' ? 'pt' : locale);
+const cursorParam = Astro.url.searchParams.get('after');
+const cursor = cursorParam ? Number(cursorParam) : null;
+const directPackageId = Number(Astro.url.searchParams.get('package') ?? '');
+const directMode = Number.isInteger(directPackageId) && directPackageId > 0;
+
+/* Direct mode: caller wants to edit a specific (package, locale). Skips the
+ * draft-only filter and queue ordering. Used by AdminEditChip on /p/[slug]. */
+const queueRows = directMode
+  ? await db
+      .select({
+        packageId: schema.packageTranslation.packageId,
+        pkgName: schema.packageTable.name,
+        pkgSlug: schema.packageTable.slug,
+        summary: schema.packageTranslation.summary,
+        description: schema.packageTranslation.description,
+        plainExplanation: schema.packageTranslation.plainExplanation,
+        translatedBy: schema.packageTranslation.translatedBy,
+        updatedAt: schema.packageTranslation.updatedAt,
+      })
+      .from(schema.packageTranslation)
+      .innerJoin(schema.packageTable, eq(schema.packageTranslation.packageId, schema.packageTable.id))
+      .where(and(
+        eq(schema.packageTranslation.locale, targetLocale),
+        eq(schema.packageTranslation.packageId, directPackageId),
+      ))
+      .limit(1)
+  : await db
+      .select({
+        packageId: schema.packageTranslation.packageId,
+        pkgName: schema.packageTable.name,
+        pkgSlug: schema.packageTable.slug,
+        summary: schema.packageTranslation.summary,
+        description: schema.packageTranslation.description,
+        plainExplanation: schema.packageTranslation.plainExplanation,
+        translatedBy: schema.packageTranslation.translatedBy,
+        updatedAt: schema.packageTranslation.updatedAt,
+      })
+      .from(schema.packageTranslation)
+      .innerJoin(schema.packageTable, eq(schema.packageTranslation.packageId, schema.packageTable.id))
+      .where(and(
+        eq(schema.packageTranslation.locale, targetLocale),
+        eq(schema.packageTranslation.status, 'draft'),
+        cursor ? sql`${schema.packageTranslation.packageId} > ${cursor}` : sql`TRUE`,
+      ))
+      .orderBy(schema.packageTranslation.packageId)
+      .limit(50);
+
+const totalCountRow = await db.execute<{ n: number }>(sql`
+  SELECT COUNT(*)::int AS n FROM package_translation
+  WHERE locale = ${targetLocale} AND status = 'draft'
+`);
+const totalCount = (totalCountRow as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+
+const current = queueRows[0];
+let source: { summary: string; description: string; plainExplanation: string; locale: string } | null = null;
+
+if (current) {
+  /* Source: prefer en translation row (richer/already curated), fallback to
+   * package.raw_metadata->>desc (upstream appstream string). */
+  const [enRow] = await db.select({
+    summary: schema.packageTranslation.summary,
+    description: schema.packageTranslation.description,
+    plainExplanation: schema.packageTranslation.plainExplanation,
+  }).from(schema.packageTranslation)
+    .where(and(
+      eq(schema.packageTranslation.packageId, current.packageId),
+      eq(schema.packageTranslation.locale, 'en'),
+    )).limit(1);
+
+  const [pkgRow] = await db.select({
+    rawMetadata: schema.packageTable.rawMetadata,
+  }).from(schema.packageTable)
+    .where(eq(schema.packageTable.id, current.packageId)).limit(1);
+
+  const upstreamDesc = (pkgRow?.rawMetadata as { desc?: string } | null)?.desc ?? '';
+
+  source = {
+    locale: enRow ? 'en' : 'upstream',
+    summary: enRow?.summary ?? upstreamDesc ?? '',
+    description: enRow?.description ?? '',
+    plainExplanation: enRow?.plainExplanation ?? '',
+  };
+}
+
+const nextUrl = !directMode && queueRows.length > 1 && current
+  ? `${Astro.url.pathname}?locale=${targetLocale}&after=${current.packageId}`
+  : null;
+
+const isPt = locale === 'pt';
+const editorLabels = {
+  summary: dict.admin.summary,
+  description: dict.admin.description,
+  plainExplanation: dict.admin.plainExplanation,
+  source: isPt ? 'Original' : 'Source',
+  target: isPt ? 'Tradução' : 'Translation',
+  saveDraft: isPt ? 'Salvar rascunho' : 'Save draft',
+  saveDraftHint: isPt ? 'Guarda alterações como rascunho. Não aparece no site.' : 'Stores changes as draft. Not visible on site.',
+  markReviewed: isPt ? 'Marcar como revisado' : 'Mark as reviewed',
+  markReviewedHint: isPt ? 'Tradutor terminou. Aguarda revisor/admin publicar.' : 'Translator finished. Awaits reviewer/admin to publish.',
+  publish: isPt ? 'Publicar oficial' : 'Publish as official',
+  publishHint: isPt ? 'Vai ao ar imediatamente. Apenas revisor/admin.' : 'Goes live immediately. Reviewer/admin only.',
+  copyToTarget: isPt ? 'Copiar →' : 'Copy →',
+  empty: isPt ? '(vazio)' : '(empty)',
+  actionOk: dict.admin.actionOk,
+  actionFailed: dict.admin.actionFailed,
+  next: isPt ? 'Próximo' : 'Next',
+  skip: isPt ? 'Pular' : 'Skip',
+  suggest: isPt ? 'Traduzir com IA (DeepSeek)' : 'Translate with AI (DeepSeek)',
+  suggesting: isPt ? 'Traduzindo…' : 'Translating…',
+};
+---
+
+<Base title={dict.admin.translateTitle}>
+  <section class="wrap">
+    <div class="container-page">
+      <header class="hdr">
+        <h1>{dict.admin.translateTitle}</h1>
+        <form method="get" class="filter">
+          <label>
+            <span>{isPt ? 'Idioma alvo' : 'Target locale'}</span>
+            <select name="locale">
+              {locales.map((l) => (
+                <option value={l} selected={l === targetLocale}>{l}</option>
+              ))}
+            </select>
+          </label>
+          <button type="submit">OK</button>
+          {totalCount > 0 && (
+            <span class="count">{totalCount} {isPt ? 'rascunhos pendentes' : 'pending drafts'}</span>
+          )}
+        </form>
+      </header>
+
+      {!current || !source ? (
+        <p class="empty">{dict.admin.noItems}</p>
+      ) : (
+        <article class="card">
+          <header class="cardhdr">
+            <h2><a href={localePath(locale, `/p/${current.pkgSlug}`)} target="_blank" rel="noopener">{current.pkgName}</a></h2>
+            <div class="meta">
+              {current.translatedBy && <span class="chip">{dict.admin.translatedBy}: {current.translatedBy}</span>}
+              <span class="chip src-chip">{isPt ? 'Origem' : 'Source'}: {source.locale}</span>
+              <span class="chip tgt-chip">{isPt ? 'Alvo' : 'Target'}: {targetLocale}</span>
+            </div>
+          </header>
+          <TranslationEditor
+            client:load
+            packageId={current.packageId}
+            locale={targetLocale}
+            canPublish={hasRole(role, ['reviewer', 'admin'])}
+            initial={{
+              summary: current.summary ?? '',
+              description: current.description ?? '',
+              plainExplanation: current.plainExplanation ?? '',
+            }}
+            source={source}
+            labels={editorLabels}
+            nextUrl={nextUrl}
+            canSuggest={true}
+          />
+        </article>
+      )}
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .hdr { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: var(--space-4); margin-bottom: var(--space-6); }
+  h1 { margin: 0; }
+  h2 { margin: 0; font-size: 1.25rem; }
+  h2 a { color: inherit; text-decoration: none; }
+  h2 a:hover { text-decoration: underline; }
+  .filter { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; }
+  .filter label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--color-fg-muted); }
+  .filter select { padding: 0.45rem 0.6rem; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); color: var(--color-fg); }
+  .filter button { padding: 0.5rem 1rem; border: none; border-radius: var(--radius-full); background: var(--color-teal-500); color: white; font-weight: 600; cursor: pointer; }
+  .count { font-size: var(--text-sm); color: var(--color-fg-muted); align-self: center; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); display: grid; gap: var(--space-5); }
+  .cardhdr { display: grid; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+  .meta { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .chip { font-size: 0.75rem; padding: 0.15rem 0.55rem; border-radius: var(--radius-full); background: var(--color-stone-100); color: var(--color-fg-muted); }
+  .src-chip { background: #e8f0fb; color: #1f4d8f; }
+  .tgt-chip { background: #fbeee0; color: #8b5a14; }
+  .empty { color: var(--color-fg-muted); }
+</style>

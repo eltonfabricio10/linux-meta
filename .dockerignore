@@ -1,0 +1,11 @@
+**/node_modules
+**/.astro
+**/dist
+backups
+data-export
+graphify-out
+infra/docker/data
+.git
+*.log
+.env
+.env.prod

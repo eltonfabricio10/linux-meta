@@ -1,0 +1,71 @@
+---
+import Base from '~/layouts/Base.astro';
+import DisputeForm from '~/components/dispute/DisputeForm';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq } from 'drizzle-orm';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const idRaw = Astro.params.id;
+const pkgId = idRaw ? Number(idRaw) : NaN;
+if (!Number.isInteger(pkgId) || pkgId <= 0) return new Response(null, { status: 404 });
+
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+const [pkg] = await db.select().from(schema.packageTable).where(eq(schema.packageTable.id, pkgId)).limit(1);
+if (!pkg) return new Response(dict.pkg.notFound, { status: 404 });
+
+const ageOptions = [
+  { value: 0,  label: locale === 'pt' ? 'Livre (0+)' : 'Everyone (0+)' },
+  { value: 7,  label: '7+' },
+  { value: 9,  label: '9+' },
+  { value: 13, label: '13+' },
+  { value: 15, label: '15+' },
+  { value: 18, label: '18+' },
+];
+
+const labels = {
+  intro: locale === 'pt'
+    ? `Conte por que você acha que a classificação de “${pkg.name}” deveria ser diferente. Citações de fontes ajudam.`
+    : `Tell us why you think the rating for “${pkg.name}” should be different. Sources help.`,
+  suggestedAge:   locale === 'pt' ? 'Idade sugerida' : 'Suggested age',
+  reason:         locale === 'pt' ? 'Motivo' : 'Reason',
+  reasonHint:     locale === 'pt' ? 'Mínimo 10 caracteres. Não compartilhe dados pessoais.' : 'Minimum 10 characters. Do not share personal data.',
+  email:          dict.auth.email,
+  emailHint:      locale === 'pt' ? 'Usado só para acompanhar a disputa.' : 'Used only to follow up on this dispute.',
+  submit:         locale === 'pt' ? 'Enviar disputa' : 'Send dispute',
+  successTitle:   locale === 'pt' ? 'Obrigado!' : 'Thank you!',
+  successBody:    locale === 'pt'
+    ? 'Sua sugestão foi registrada. Revisores vão analisar em breve.'
+    : 'Your suggestion has been logged. Reviewers will look at it soon.',
+  ageOptions,
+};
+---
+
+<Base title={`${pkg.name} · ${dict.pkg.disputeCta}`}>
+  <section class="wrap">
+    <div class="container-prose">
+      <nav class="crumbs">
+        <a href={localePath(locale, `/p/${pkg.slug}`)}>← {pkg.name}</a>
+      </nav>
+      <h1>{dict.pkg.disputeCta}</h1>
+      <DisputeForm
+        client:load
+        packageId={pkg.id}
+        loggedEmail={Astro.locals.user?.email ?? null}
+        labels={labels}
+      />
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-16); }
+  .crumbs a { color: var(--color-teal-700); text-decoration: none; font-size: var(--text-sm); }
+  .crumbs a:hover { text-decoration: underline; }
+  h1 { margin: var(--space-4) 0 var(--space-8); }
+</style>

@@ -1,0 +1,260 @@
+/* Design tokens — Adwaita (GNOME 47) direction.
+   Variable names preserved from prior Catalog/Field-guide directions; values
+   remapped to Adwaita surfaces, accent blue, and layered shadows so existing
+   page consumers shift automatically.
+   Light theme default. Dark theme via [data-theme="dark"]. */
+
+:root {
+  /* === Adwaita surfaces (canonical) === */
+  --color-paper:        #fafafa;  /* window bg */
+  --color-paper-elev:   #ffffff;  /* card / elevated surface */
+  --color-ink:          #1d1d1d;  /* primary text */
+  --color-ink-muted:    #5e5c64;  /* secondary text */
+  --color-rule:         #e6e6e6;  /* borders, dividers */
+
+  /* Accent: Adwaita blue. "forest" name kept for backwards compat. */
+  --color-forest:        #1a5fb4;
+  --color-forest-hover:  #0d4f9e;
+  /* CTA / warm accent: Adwaita orange. "terracotta" name kept. */
+  --color-terracotta:        #b65400;
+  --color-terracotta-hover:  #a34700;
+  --color-slate-blue:    #1c71d8;  /* info, secondary */
+
+  /* Age spectrum — Adwaita-flavored greens to oranges to purple.
+     No red (destructive reserved for system warnings). */
+  --age-3:  #155d39;  /* green */
+  --age-7:  #7a6500;  /* yellow */
+  --age-12: #b65400;  /* warm orange */
+  --age-16: #a34700;  /* deep orange */
+  --age-18: #9141ac;  /* purple */
+
+  /* === Legacy aliases (preserve names for unmigrated callers) === */
+  --color-navy-50:  #ffffff;
+  --color-navy-100: #f6f5f4;
+  --color-navy-200: #deddda;
+  --color-navy-400: #9a9996;
+  --color-navy-600: #3d3846;
+  --color-navy-700: #241f31;
+  --color-navy-900: var(--color-ink);
+
+  --color-teal-50:  #e8f0fb;
+  --color-teal-300: #62a0ea;
+  --color-teal-500: var(--color-forest);
+  --color-teal-700: var(--color-forest-hover);
+
+  --color-coral-200: #fbd9c1;
+  --color-coral-400: #ff9248;
+  --color-coral-600: var(--color-terracotta-hover);
+
+  --color-amber-200: #fce3a3;
+  --color-amber-400: var(--age-12);
+  --color-amber-600: var(--color-terracotta);
+
+  --color-sage-400: #57e389;
+  --color-sage-600: var(--age-3);
+
+  --color-terra-400: #c061cb;
+  --color-terra-600: var(--age-18);
+
+  --color-stone-100: var(--color-rule);
+  --color-stone-200: #deddda;
+  --color-stone-300: #9a9996;
+  --color-stone-500: var(--color-ink-muted);
+
+  /* === Semantic === */
+  --color-bg:           var(--color-paper);
+  --color-bg-elevated:  var(--color-paper-elev);
+  --color-fg:           var(--color-ink);
+  --color-fg-muted:     var(--color-ink-muted);
+  --color-border:       var(--color-rule);
+  --color-primary:      var(--color-forest);
+  --color-primary-fg:   #ffffff;
+  --color-accent:       var(--color-forest);
+  --color-on-accent:    #ffffff;
+  --color-cta:          var(--color-terracotta);
+  --color-cta-fg:       #ffffff;
+  --color-warm:         var(--age-12);
+  --color-success:      var(--age-3);
+  --color-danger:       #e01b24;
+
+  /* Adwaita headerbar tint */
+  --color-headerbar:    #ebebeb;
+
+  /* === Typography === */
+  --font-sans:    "Inter", "Adwaita Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Inter", "Adwaita Sans", system-ui, -apple-system, sans-serif;
+  --font-serif:   "Newsreader", "Source Serif 4", Georgia, serif;
+  --font-mono:    "IBM Plex Mono", "Adwaita Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs:   0.78rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.35rem;
+  --text-2xl:  1.65rem;
+  --text-3xl:  2.1rem;
+  --text-4xl:  2.75rem;
+  --text-display: clamp(2.5rem, 3.5vw + 1rem, 4.5rem);
+
+  --leading-tight: 1.15;
+  --leading-snug:  1.3;
+  --leading-body:  1.6;
+
+  /* === Spacing === */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-14: 3.5rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --space-32: 8rem;
+
+  /* === Radius (Adwaita: rounded, soft) === */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* === Shadow (Adwaita layered elevation) === */
+  --shadow-xs:
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-sm:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg:
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    0 2px 6px rgba(0, 0, 0, 0.08),
+    0 12px 32px rgba(0, 0, 0, 0.10);
+  --shadow-card:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover:
+    0 0 0 1px rgba(53, 132, 228, 0.18),
+    0 4px 12px rgba(0, 0, 0, 0.08),
+    0 12px 28px rgba(0, 0, 0, 0.10);
+
+  /* === Motion === */
+  --ease-out-quad:  cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-out-expo:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-med:  220ms;
+  --duration-slow: 380ms;
+
+  /* === Brand identity (bolder redesign) ===
+     The age spectrum IS the brand. green = safe/welcoming, purple = depth.
+     Aditivo: não remove tokens Adwaita; consumidores antigos seguem iguais. */
+  --brand-1: var(--age-3);   /* green */
+  --brand-2: var(--age-12);  /* warm orange */
+  --brand-3: var(--age-18);  /* purple */
+  --brand-gradient: linear-gradient(115deg,
+    var(--age-3) 0%, var(--age-7) 30%, var(--age-12) 60%, var(--age-18) 100%);
+  --brand-gradient-soft: linear-gradient(135deg,
+    color-mix(in srgb, var(--age-3) 14%, var(--color-paper)) 0%,
+    color-mix(in srgb, var(--age-18) 14%, var(--color-paper)) 100%);
+
+  /* Hero band — dark surface for strong contrast vs light body */
+  --surface-hero:        #10131a;
+  --surface-hero-elev:   #181c26;
+  --surface-hero-fg:     #f5f6f8;
+  --surface-hero-muted:  #aeb4c2;
+  --surface-hero-rule:   rgba(255, 255, 255, 0.10);
+
+  --shadow-hero:
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 24px 64px rgba(0, 0, 0, 0.16);
+}
+
+[data-theme="dark"] {
+  --color-paper:       #242424;
+  --color-paper-elev:  #303030;
+  --color-ink:         #ffffff;
+  --color-ink-muted:   #c0bfbc;
+  --color-rule:        #3d3d3d;
+
+  --color-forest:        #78aeed;
+  --color-forest-hover:  #99c1f1;
+  --color-terracotta:        #ff9248;
+  --color-terracotta-hover:  #ffb87b;
+  --color-slate-blue:    #99c1f1;
+
+  --age-3:  #57e389;
+  --age-7:  #f8e45c;
+  --age-12: #ff9248;
+  --age-16: #ff7800;
+  --age-18: #c061cb;
+
+  --color-headerbar:    #303030;
+  --color-danger:       #f66151;
+
+  /* Semantic re-bound */
+  --color-bg:           var(--color-paper);
+  --color-bg-elevated:  var(--color-paper-elev);
+  --color-fg:           var(--color-ink);
+  --color-fg-muted:     var(--color-ink-muted);
+  --color-border:       var(--color-rule);
+  --color-primary:      var(--color-forest);
+  --color-primary-fg:   #1a1a1a;
+  --color-accent:       var(--color-forest);
+  --color-on-accent:    #1a1a1a;
+  --color-cta:          var(--color-terracotta);
+  --color-cta-fg:       #1a1a1a;
+  --color-success:      var(--age-3);
+
+  --shadow-xs:
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-sm:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.45),
+    0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 2px 6px rgba(0, 0, 0, 0.55),
+    0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-card:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover:
+    0 0 0 1px rgba(120, 174, 237, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.45),
+    0 12px 28px rgba(0, 0, 0, 0.55);
+
+  /* Brand/hero in dark: hero band sits below the (already dark) body */
+  --surface-hero:        #0b0d12;
+  --surface-hero-elev:   #141823;
+  --surface-hero-fg:     #f5f6f8;
+  --surface-hero-muted:  #aeb4c2;
+  --surface-hero-rule:   rgba(255, 255, 255, 0.12);
+  --shadow-hero:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.55),
+    0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

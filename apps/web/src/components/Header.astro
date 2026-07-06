@@ -1,0 +1,393 @@
+---
+import { getLocaleFromUrl, t, localePath, switchLocalePath, locales } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const home = localePath(locale, '/');
+const other = locales.filter((l) => l !== locale);
+
+const role = await getUserRole(Astro.locals.user?.id);
+const showTranslate = hasRole(role, ['translator', 'reviewer', 'admin']);
+const showReview = hasRole(role, ['reviewer', 'admin']);
+const showAdmin = hasRole(role, ['admin']);
+const isLoggedIn = !!Astro.locals.user;
+const showEditToggle = hasRole(role, ['translator', 'reviewer', 'admin']);
+const contribLabel = locale === 'pt' ? 'Contribuir' : 'Contribute';
+const applyLabel = locale === 'pt' ? 'Voluntariar-se' : 'Apply as volunteer';
+const submitPkgLabel = locale === 'pt' ? 'Sugerir software' : 'Suggest software';
+const loginLabel = locale === 'pt' ? 'Entrar' : 'Sign in';
+const themeLabel = locale === 'pt' ? 'Alternar tema' : 'Toggle theme';
+const editLabel = locale === 'pt' ? 'Modo edição (atalho: e)' : 'Edit mode (shortcut: e)';
+const suffixLabel = locale === 'pt' ? 'guia de software Linux' : 'Linux software guide';
+const menuLabel = locale === 'pt' ? 'Menu' : 'Menu';
+const closeMenuLabel = locale === 'pt' ? 'Navegação' : 'Navigation';
+---
+
+<header class="site-header">
+  <div class="container-page row">
+    <a href={home} class="brand" aria-label={dict.site.name}>
+      <span class="wordmark">{dict.site.name}</span>
+      <span class="suffix">· {suffixLabel}</span>
+    </a>
+
+    <nav aria-label="Primary" class="primary">
+      <ul>
+        <li><a href={localePath(locale, '/browse')}>{dict.nav.browse}</a></li>
+        <li><a href={localePath(locale, '/lists')}>{dict.nav.lists}</a></li>
+        <li><a href={localePath(locale, '/about')}>{dict.nav.about}</a></li>
+        <li><a href={localePath(locale, '/transparency')}>{dict.nav.transparency}</a></li>
+        {showTranslate && (
+          <li><a href={localePath(locale, '/traduzir')}>{dict.admin.navTranslate}</a></li>
+        )}
+        {showReview && (
+          <li><a href={localePath(locale, '/revisar')}>{dict.admin.navReview}</a></li>
+        )}
+        {showAdmin && (
+          <li><a href={localePath(locale, '/admin')}>{dict.admin.navAdmin}</a></li>
+        )}
+        {isLoggedIn ? (
+          <li class="has-menu">
+            <details>
+              <summary>{contribLabel}</summary>
+              <ul class="submenu">
+                <li><a href={localePath(locale, '/aplicar')}>{applyLabel}</a></li>
+                <li><a href={localePath(locale, '/contribuir/pacote')}>{submitPkgLabel}</a></li>
+              </ul>
+            </details>
+          </li>
+        ) : (
+          <li><a href={localePath(locale, '/auth/login')}>{loginLabel}</a></li>
+        )}
+        <li><a class="cta" href={localePath(locale, '/sponsor')}>{dict.nav.sponsor}</a></li>
+      </ul>
+    </nav>
+
+    <div class="utilities">
+      {showEditToggle && (
+        <button class="edit-toggle" type="button" aria-label={editLabel} aria-pressed="false" data-edit-toggle>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+        </button>
+      )}
+      <button class="theme-toggle" type="button" aria-label={themeLabel} data-theme-toggle>
+        <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+
+      <div class="lang" aria-label={dict.lang.switchTo}>
+        {other.map((l) => (
+          <a href={switchLocalePath(Astro.url, l)} hreflang={l} lang={l}>{l.toUpperCase()}</a>
+        ))}
+      </div>
+
+      <details class="mobile-menu">
+        <summary aria-label={menuLabel}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </summary>
+        <nav aria-label={closeMenuLabel} class="mobile-panel">
+          <a href={localePath(locale, '/browse')}>{dict.nav.browse}</a>
+          <a href={localePath(locale, '/lists')}>{dict.nav.lists}</a>
+          <a href={localePath(locale, '/about')}>{dict.nav.about}</a>
+          <a href={localePath(locale, '/transparency')}>{dict.nav.transparency}</a>
+          {showTranslate && <a href={localePath(locale, '/traduzir')}>{dict.admin.navTranslate}</a>}
+          {showReview && <a href={localePath(locale, '/revisar')}>{dict.admin.navReview}</a>}
+          {showAdmin && <a href={localePath(locale, '/admin')}>{dict.admin.navAdmin}</a>}
+          {isLoggedIn ? (
+            <>
+              <a href={localePath(locale, '/aplicar')}>{applyLabel}</a>
+              <a href={localePath(locale, '/contribuir/pacote')}>{submitPkgLabel}</a>
+            </>
+          ) : (
+            <a href={localePath(locale, '/auth/login')}>{loginLabel}</a>
+          )}
+          <a class="mobile-cta" href={localePath(locale, '/sponsor')}>{dict.nav.sponsor}</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+
+<script>
+  function applyTheme(theme: 'light' | 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('theme', theme); } catch {}
+  }
+  function currentTheme(): 'light' | 'dark' {
+    const stored = (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) as 'light' | 'dark' | null;
+    if (stored === 'light' || stored === 'dark') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function bindToggle() {
+    const btn = document.querySelector('[data-theme-toggle]');
+    if (!btn || btn.getAttribute('data-bound') === '1') return;
+    btn.setAttribute('data-bound', '1');
+    btn.addEventListener('click', () => {
+      const next = currentTheme() === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+    });
+  }
+
+  function applyEditMode(on: boolean) {
+    document.documentElement.setAttribute('data-edit-mode', on ? 'on' : 'off');
+    try { localStorage.setItem('lm:edit-mode', on ? 'on' : 'off'); } catch {}
+    document.querySelectorAll('[data-edit-toggle]').forEach((b) => {
+      (b as HTMLButtonElement).setAttribute('aria-pressed', on ? 'true' : 'false');
+      (b as HTMLButtonElement).classList.toggle('is-on', on);
+    });
+  }
+  function currentEditMode(): boolean {
+    try { return localStorage.getItem('lm:edit-mode') === 'on'; } catch { return false; }
+  }
+  function bindEdit() {
+    const btn = document.querySelector('[data-edit-toggle]') as HTMLButtonElement | null;
+    if (btn && btn.getAttribute('data-bound') !== '1') {
+      btn.setAttribute('data-bound', '1');
+      btn.addEventListener('click', () => applyEditMode(!currentEditMode()));
+    }
+    if (!(document as any)._lmEditKeyBound) {
+      (document as any)._lmEditKeyBound = true;
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'e' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        const t = ev.target as HTMLElement | null;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (!document.querySelector('[data-edit-toggle]')) return;
+        applyEditMode(!currentEditMode());
+      });
+    }
+  }
+
+  function init() {
+    applyTheme(currentTheme());
+    applyEditMode(currentEditMode());
+    bindToggle();
+    bindEdit();
+  }
+  init();
+  document.addEventListener('astro:after-swap', init);
+</script>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in srgb, var(--color-headerbar) 92%, transparent);
+    backdrop-filter: saturate(140%) blur(12px);
+    -webkit-backdrop-filter: saturate(140%) blur(12px);
+    border-block-end: 1px solid var(--color-rule);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    block-size: 56px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    color: var(--color-ink);
+    text-decoration: none;
+    flex-shrink: 0;
+  }
+  .wordmark {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .suffix {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: var(--color-ink-muted);
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  nav.primary { flex: 1; min-inline-size: 0; }
+  nav.primary ul {
+    list-style: none;
+    display: flex;
+    gap: 2px;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    align-items: center;
+  }
+  nav.primary a {
+    color: var(--color-fg);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    padding: var(--space-2) 10px;
+    border-radius: var(--radius-md);
+    transition: background var(--duration-fast) var(--ease-out-quad), color var(--duration-fast) var(--ease-out-quad);
+  }
+  nav.primary a:hover {
+    background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+    color: var(--color-ink);
+  }
+  nav.primary a.cta {
+    background: var(--color-forest);
+    color: var(--color-on-accent);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-full);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  nav.primary a.cta:hover {
+    background: var(--color-forest-hover);
+    color: var(--color-on-accent);
+  }
+  .has-menu { position: relative; }
+  .has-menu summary {
+    list-style: none; cursor: pointer;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: 0.92rem;
+    font-weight: 500;
+  }
+  .has-menu summary:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
+  .has-menu summary::-webkit-details-marker { display: none; }
+  .submenu {
+    position: absolute; top: calc(100% + 8px); right: 0;
+    background: var(--color-paper-elev);
+    border-radius: var(--radius-lg); padding: var(--space-2); min-width: 220px;
+    display: grid; gap: 0;
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
+  }
+  .submenu li { display: block; }
+  .submenu a {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    display: block;
+    color: var(--color-ink);
+    font-weight: 400;
+  }
+  .submenu a:hover { background: color-mix(in srgb, var(--color-forest) 12%, transparent); color: var(--color-forest); }
+  .utilities {
+    display: flex; align-items: center; gap: var(--space-2);
+    margin-inline-start: auto;
+  }
+  .theme-toggle, .edit-toggle {
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-full);
+    color: var(--color-ink-muted);
+    cursor: pointer;
+    padding: 0;
+    inline-size: 44px;
+    block-size: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--duration-fast) var(--ease-out-quad), color var(--duration-fast) var(--ease-out-quad);
+  }
+  .theme-toggle:hover, .edit-toggle:hover {
+    background: color-mix(in srgb, var(--color-ink) 8%, transparent);
+    color: var(--color-ink);
+  }
+  .edit-toggle.is-on {
+    color: var(--color-on-accent);
+    background: var(--color-forest);
+  }
+  .edit-toggle.is-on:hover { background: var(--color-forest-hover); color: var(--color-on-accent); }
+  .theme-toggle .icon-moon { display: none; }
+  :global([data-theme="dark"]) .theme-toggle .icon-sun { display: none; }
+  :global([data-theme="dark"]) .theme-toggle .icon-moon { display: inline-block; }
+  .lang { display: flex; gap: var(--space-1); }
+  .lang a {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: var(--color-ink-muted);
+    text-decoration: none;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    padding: 0 10px;
+    border-radius: var(--radius-full);
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .lang a:hover { background: color-mix(in srgb, var(--color-ink) 8%, transparent); color: var(--color-ink); }
+  .mobile-menu { display: none; position: relative; }
+  .mobile-menu summary {
+    inline-size: 44px;
+    block-size: 44px;
+    border-radius: var(--radius-full);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--color-ink);
+    list-style: none;
+  }
+  .mobile-menu summary::-webkit-details-marker { display: none; }
+  .mobile-menu summary:hover {
+    background: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  }
+  .mobile-panel {
+    position: fixed;
+    inset-block-start: 57px;
+    inset-inline: var(--space-4);
+    z-index: 70;
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+  }
+  .mobile-panel a {
+    min-block-size: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--color-ink);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .mobile-panel a:hover {
+    background: color-mix(in srgb, var(--color-forest) 10%, transparent);
+    color: var(--color-forest);
+  }
+  .mobile-panel .mobile-cta {
+    background: var(--color-forest);
+    color: var(--color-on-accent);
+  }
+  .mobile-panel .mobile-cta:hover {
+    background: var(--color-forest-hover);
+    color: var(--color-on-accent);
+  }
+  /* Decorative tagline — only on wide screens. */
+  @media (max-width: 1240px) {
+    .suffix { display: none; }
+  }
+  /* Collapse the (crowded, role-aware) nav into the hamburger menu earlier. */
+  @media (max-width: 1024px) {
+    .row { gap: var(--space-3); }
+    nav.primary { display: none; }
+    .mobile-menu { display: block; }
+  }
+  @media (max-width: 520px) {
+    .container-page.row { padding-inline: var(--space-4); }
+    .wordmark { font-size: 1rem; }
+  }
+</style>

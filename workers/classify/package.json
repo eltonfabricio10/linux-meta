@@ -1,0 +1,19 @@
+{
+  "name": "@linux-meta/classify",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "classify": "node --experimental-strip-types --no-warnings src/worker.ts",
+    "smoke": "LIMIT=3 node --experimental-strip-types --no-warnings src/worker.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@linux-meta/db": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}

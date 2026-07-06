@@ -1,0 +1,153 @@
+---
+/**
+ * DoorwayCard — §03 da home. Porta de entrada por TAREFA (não por persona):
+ * famílias clicam "Crianças", professores "Escolas", criadores "Multimídia".
+ * Mostra alguns specimens reais para parecer vivo; linka para a lista completa.
+ */
+import type { Locale } from '~/i18n';
+
+interface DoorwayItem {
+  name: string;
+  slug: string;
+  ageMin?: number | null;
+}
+
+interface Props {
+  locale: Locale;
+  title: string;
+  sub: string;
+  href: string;
+  tone: 'forest' | 'terracotta' | 'slate' | 'amber';
+  items: DoorwayItem[];
+}
+
+const { locale, title, sub, href, tone, items } = Astro.props;
+const isPt = locale === 'pt';
+
+function ageBucket(age: number | null | undefined): string {
+  if (age == null) return 'unknown';
+  if (age <= 6) return 'a3';
+  if (age <= 11) return 'a7';
+  if (age <= 15) return 'a12';
+  if (age <= 17) return 'a16';
+  return 'a18';
+}
+---
+
+<a class={`doorway tone-${tone}`} href={href}>
+  <div class="dw-head">
+    <h3>{title}</h3>
+    <p class="dw-sub">{sub}</p>
+  </div>
+  <ul class="dw-items">
+    {items.slice(0, 4).map((p) => (
+      <li>
+        <span class="dw-glyph" aria-hidden="true">{p.name.charAt(0).toUpperCase()}</span>
+        <span class="dw-name">{p.name}</span>
+        <span class={`dw-age age-${ageBucket(p.ageMin)}`}>{p.ageMin == null ? '—' : `${p.ageMin}+`}</span>
+      </li>
+    ))}
+  </ul>
+  <span class="dw-cta">{isPt ? 'Abrir lista' : 'Open list'} →</span>
+</a>
+
+<style>
+  .doorway {
+    --tone: var(--color-forest);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-6);
+    background: var(--color-paper-elev);
+    border-radius: var(--radius-xl);
+    border-block-start: 3px solid var(--tone);
+    box-shadow: var(--shadow-card);
+    text-decoration: none;
+    color: var(--color-ink);
+    transition: transform var(--duration-fast) var(--ease-out-expo),
+                box-shadow var(--duration-fast) var(--ease-out-expo);
+  }
+  .doorway:hover {
+    transform: translateY(-4px);
+    box-shadow:
+      0 0 0 1.5px color-mix(in srgb, var(--tone) 45%, transparent),
+      var(--shadow-lg);
+  }
+  .tone-forest { --tone: var(--color-forest); }
+  .tone-terracotta { --tone: var(--color-terracotta); }
+  .tone-slate { --tone: var(--color-slate-blue); }
+  .tone-amber { --tone: var(--age-12); }
+
+  .dw-head h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--text-xl);
+    letter-spacing: -0.01em;
+    color: var(--tone);
+  }
+  .dw-sub {
+    margin: var(--space-2) 0 0;
+    color: var(--color-ink-muted);
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+  .dw-items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: var(--space-2);
+    flex: 1;
+  }
+  .dw-items li {
+    display: grid;
+    grid-template-columns: 26px 1fr max-content;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .dw-glyph {
+    inline-size: 26px;
+    block-size: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--tone) 14%, var(--color-paper));
+    color: var(--tone);
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+  .dw-name {
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 0.92rem;
+    color: var(--color-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dw-age {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    line-height: 1.4;
+  }
+  .dw-age.age-a3 { color: var(--age-3); }
+  .dw-age.age-a7 { color: color-mix(in srgb, var(--age-7) 80%, black); }
+  .dw-age.age-a12 { color: color-mix(in srgb, var(--age-12) 80%, black); }
+  .dw-age.age-a16 { color: var(--age-16); }
+  .dw-age.age-a18 { color: var(--age-18); }
+  .dw-age.age-unknown { color: var(--color-ink-muted); }
+
+  .dw-cta {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tone);
+  }
+</style>

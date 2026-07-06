@@ -1,0 +1,95 @@
+---
+/* Catalog-tag style: small, monospaced, border-left tone. No pill, no dot. */
+interface Props {
+  source: string | null;
+  locale: string;
+  date?: string | Date | null;
+  who?: string | null;
+  status?: string | null;
+  compact?: boolean;
+}
+
+const { source, locale, date, who, status, compact = false } = Astro.props;
+
+function fmtDate(d: string | Date | null | undefined, l: string): string {
+  if (!d) return '';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString(l === 'pt' ? 'pt-BR' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function labelFor(src: string | null, l: string): { kind: 'imp' | 'ai' | 'human' | 'pending'; text: string } {
+  if (!src) return { kind: 'pending', text: l === 'pt' ? 'Sem classificação' : 'No rating' };
+  if (src === 'oars_official' || src === 'upstream') {
+    return { kind: 'imp', text: l === 'pt' ? 'OARS oficial · importado do upstream' : 'Official OARS · imported from upstream' };
+  }
+  if (src === 'ai_legacy_locale_pkgs') {
+    return { kind: 'ai', text: l === 'pt'
+      ? 'Tradução PT herdada · sem revisão humana'
+      : 'Legacy PT translation · not human-reviewed' };
+  }
+  if (src === 'ai_legacy_bigaitor') {
+    return { kind: 'ai', text: l === 'pt'
+      ? 'Tradução IA herdada · sem revisão humana'
+      : 'Legacy AI translation · not human-reviewed' };
+  }
+  if (src.startsWith('ai_')) {
+    const model = src.replace('ai_', '').replace('_', ' ');
+    return { kind: 'ai', text: l === 'pt'
+      ? `Sugerido por IA · ${model} · sem revisão humana`
+      : `AI-proposed · ${model} · not human-reviewed` };
+  }
+  if (src === 'human_reviewer') {
+    const w = who ?? (l === 'pt' ? 'revisor' : 'reviewer');
+    return { kind: 'human', text: l === 'pt' ? `Revisado por ${w}` : `Reviewed by ${w}` };
+  }
+  return { kind: 'pending', text: src };
+}
+
+const lbl = labelFor(source, locale);
+const dateStr = fmtDate(date, locale);
+const kindLabel: Record<string, string> = {
+  imp: 'IMP', ai: 'IA', human: 'REV', pending: '·',
+};
+---
+
+<span class={`prov prov-${lbl.kind} ${compact ? 'prov-compact' : ''}`} title={lbl.text + (status ? ` · ${status}` : '')}>
+  <span class="prov-kind" aria-hidden="true">{kindLabel[lbl.kind]}</span>
+  <span class="prov-text">{lbl.text}{status ? ` · ${status}` : ''}{dateStr && ` · ${dateStr}`}</span>
+</span>
+
+<style>
+  .prov {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+    padding: 2px var(--space-2) 2px 8px;
+    border-radius: 0;
+    border-inline-start: 3px solid var(--prov-tone, var(--color-rule));
+    background: transparent;
+    color: var(--color-ink-muted);
+    letter-spacing: 0.02em;
+    max-inline-size: 100%;
+  }
+  .prov-compact { font-size: 0.66rem; padding: 1px var(--space-2) 1px 7px; }
+  .prov-kind {
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: var(--prov-tone, var(--color-rule));
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    flex: 0 0 auto;
+  }
+  .prov-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .prov-imp     { --prov-tone: var(--color-slate-blue); }
+  .prov-ai      { --prov-tone: var(--age-12); }
+  .prov-human   { --prov-tone: var(--age-3); }
+  .prov-pending { --prov-tone: var(--color-rule); border-inline-start-style: dashed; }
+</style>

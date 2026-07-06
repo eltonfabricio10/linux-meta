@@ -1,0 +1,177 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath, defaultLocale } from '~/i18n';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, gte, ilike, lte, type SQL } from 'drizzle-orm';
+import RatingTable, { type RatingItem } from '~/components/admin/RatingTable.tsx';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const STRINGS = {
+  en: {
+    pageTitle: 'Ratings',
+    intro: 'Inspect and curate package ratings across sources (OARS imports, AI classifiers, human reviewers).',
+    q: 'Package name',
+    sourceLabel: 'Source',
+    minAge: 'Min age',
+    maxAge: 'Max age',
+    apply: 'Filter',
+    reset: 'Reset',
+    empty: 'No ratings match the current filters.',
+    errorPrefix: 'Error',
+    pkg: 'Package',
+    age: 'Age',
+    source: 'Source',
+    reason: 'Reason',
+    created: 'Created',
+    actions: 'Actions',
+    delete: 'Delete',
+    deleteSelected: 'Delete selected',
+    confirmDelete: 'Delete this rating?',
+    confirmBulk: 'Delete {n} ratings?',
+    selected: 'Select row',
+    sourceImported: 'Imported',
+    sourceAi: 'AI',
+    sourceHuman: 'Human',
+  },
+  pt: {
+    pageTitle: 'Avaliações',
+    intro: 'Inspecione e cure as avaliações de pacotes vindas de várias fontes (importações OARS, classificadores IA, revisores humanos).',
+    q: 'Nome do pacote',
+    sourceLabel: 'Fonte',
+    minAge: 'Idade mín.',
+    maxAge: 'Idade máx.',
+    apply: 'Filtrar',
+    reset: 'Limpar',
+    empty: 'Nenhuma avaliação corresponde aos filtros.',
+    errorPrefix: 'Erro',
+    pkg: 'Pacote',
+    age: 'Idade',
+    source: 'Fonte',
+    reason: 'Motivo',
+    created: 'Criada',
+    actions: 'Ações',
+    delete: 'Apagar',
+    deleteSelected: 'Apagar selecionadas',
+    confirmDelete: 'Apagar esta avaliação?',
+    confirmBulk: 'Apagar {n} avaliações?',
+    selected: 'Selecionar linha',
+    sourceImported: 'Importada',
+    sourceAi: 'IA',
+    sourceHuman: 'Humana',
+  },
+} as const;
+const L = STRINGS[locale as keyof typeof STRINGS] ?? STRINGS[defaultLocale as keyof typeof STRINGS];
+
+// Parse filters (server-side; identical schema lives in the API).
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 120);
+const source = (params.get('source') ?? '').trim().slice(0, 32);
+const minAgeRaw = params.get('min_age');
+const maxAgeRaw = params.get('max_age');
+const minAge = minAgeRaw && /^\d+$/.test(minAgeRaw) ? Math.min(18, Math.max(0, Number(minAgeRaw))) : null;
+const maxAge = maxAgeRaw && /^\d+$/.test(maxAgeRaw) ? Math.min(18, Math.max(0, Number(maxAgeRaw))) : null;
+const packageIdRaw = params.get('package');
+const packageId = packageIdRaw && /^\d+$/.test(packageIdRaw) ? Number(packageIdRaw) : null;
+
+const conds: SQL[] = [];
+if (packageId !== null) conds.push(eq(schema.rating.packageId, packageId));
+if (q.length > 0) conds.push(ilike(schema.packageTable.name, `%${q}%`));
+if (source.length > 0) conds.push(eq(schema.rating.source, source));
+if (minAge !== null) conds.push(gte(schema.rating.ageMin, minAge));
+if (maxAge !== null) conds.push(lte(schema.rating.ageMin, maxAge));
+const where = conds.length > 0 ? and(...conds) : undefined;
+
+const rows = await db
+  .select({
+    id: schema.rating.id,
+    packageId: schema.rating.packageId,
+    packageName: schema.packageTable.name,
+    packageSlug: schema.packageTable.slug,
+    source: schema.rating.source,
+    ageMin: schema.rating.ageMin,
+    confidence: schema.rating.confidence,
+    classifierVersion: schema.rating.classifierVersion,
+    rationale: schema.rating.rationale,
+    createdAt: schema.rating.createdAt,
+  })
+  .from(schema.rating)
+  .innerJoin(schema.packageTable, eq(schema.rating.packageId, schema.packageTable.id))
+  .where(where)
+  .orderBy(desc(schema.rating.createdAt))
+  .limit(50);
+
+const items: RatingItem[] = rows.map((r) => ({
+  ...r,
+  createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+}));
+
+const backHref = localePath(locale, '/admin');
+---
+<Base title={`${L.pageTitle} · ${dict.admin.adminTitle}`}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs"><a href={backHref}>{dict.admin.navAdmin}</a> / {L.pageTitle}</p>
+      <h1>{L.pageTitle}</h1>
+      <p class="intro">{L.intro}</p>
+
+      <form method="get" class="filters" role="search">
+        <label>
+          <span>{L.q}</span>
+          <input type="search" name="q" value={q} maxlength="120" />
+        </label>
+        <label>
+          <span>{L.sourceLabel}</span>
+          <input type="text" name="source" value={source} maxlength="32" placeholder="flathub_oars" />
+        </label>
+        <label>
+          <span>{L.minAge}</span>
+          <input type="number" name="min_age" value={minAge ?? ''} min="0" max="18" />
+        </label>
+        <label>
+          <span>{L.maxAge}</span>
+          <input type="number" name="max_age" value={maxAge ?? ''} min="0" max="18" />
+        </label>
+        <div class="actions">
+          <button type="submit">{L.apply}</button>
+          <a href={Astro.url.pathname} class="reset">{L.reset}</a>
+        </div>
+      </form>
+
+      <article class="card">
+        <RatingTable client:load initialItems={items} labels={L} />
+      </article>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-3); }
+  .intro { color: var(--color-fg-muted); margin: 0 0 var(--space-6); max-width: 60ch; }
+  .crumbs { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-size: 0.9rem; }
+  .crumbs a { color: inherit; text-decoration: underline; }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-3); margin-block-end: var(--space-6); align-items: end; }
+  .filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+  .filters input { font: inherit; padding: 0.4rem 0.6rem; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-bg-elevated); color: var(--color-fg); }
+  .actions { display: flex; gap: var(--space-3); align-items: center; }
+  .actions button { font: inherit; padding: 0.45rem 1rem; border-radius: var(--radius-full); border: 1px solid var(--color-border); background: var(--color-cta); color: var(--color-cta-fg); font-weight: 600; cursor: pointer; }
+  .actions .reset { color: var(--color-fg-muted); text-decoration: underline; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+</style>

@@ -1,0 +1,155 @@
+---
+/**
+ * EspecimenCard — field-guide entry for a Linux package.
+ * Used in hero featured grid + browse featured strip.
+ *
+ * Visual: paper-elev card, 1px rule border, hover translate-y -2px.
+ * No shadow. Max radius 6px. Optional illustration slot (CSS gradient
+ * placeholder by tone until commissioned art ships).
+ */
+import { localePath, type Locale } from '~/i18n';
+
+interface Props {
+  locale: Locale;
+  id: number;
+  slug: string;
+  name: string;
+  summary?: string | null;
+  ageMin?: number | null;
+  source?: string | null;
+}
+
+const { locale, slug, name, summary, ageMin, source } = Astro.props;
+
+function ageTone(age: number | null | undefined): string {
+  if (age == null) return 'unknown';
+  if (age <= 6) return 'age-3';
+  if (age <= 9) return 'age-7';
+  if (age <= 13) return 'age-12';
+  if (age <= 16) return 'age-16';
+  return 'age-18';
+}
+
+function ageLabel(age: number | null | undefined): string {
+  if (age == null) return '—';
+  return `${age}+`;
+}
+
+const tone = ageTone(ageMin);
+const href = localePath(locale, `/p/${slug}`);
+const sourceLabel = source ?? '—';
+const trimmedSummary = summary ? (summary.length > 90 ? summary.slice(0, 88) + '…' : summary) : null;
+---
+
+<a class={`especimen tone-${tone}`} href={href}>
+  <div class="thumb" aria-hidden="true">
+    <span class="thumb-glyph">{name.charAt(0).toUpperCase()}</span>
+  </div>
+  <div class="body">
+    <div class="row">
+      <strong class="name">{name}</strong>
+      <span class={`age age-${tone}`}>{ageLabel(ageMin)}</span>
+    </div>
+    {trimmedSummary && <p class="summary">{trimmedSummary}</p>}
+    <p class="source">{sourceLabel}</p>
+  </div>
+</a>
+
+<style>
+  .especimen {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    text-decoration: none;
+    color: var(--color-ink);
+    background: var(--color-paper-elev);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    transition: transform var(--duration-fast) var(--ease-out-expo),
+                box-shadow var(--duration-fast) var(--ease-out-expo);
+  }
+  .especimen:hover {
+    transform: translateY(-4px);
+    box-shadow:
+      0 0 0 1.5px color-mix(in srgb, var(--tone-color, var(--color-forest)) 45%, transparent),
+      var(--shadow-lg);
+  }
+  .especimen:focus-visible {
+    outline: 2px solid var(--tone-color, var(--color-forest));
+    outline-offset: 2px;
+  }
+  .thumb {
+    inline-size: 64px;
+    block-size: 64px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--thumb-bg, var(--color-paper));
+  }
+  .thumb-glyph {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.8rem;
+    color: var(--thumb-fg, var(--color-ink));
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .tone-age-3 { --tone-color: var(--age-3); --thumb-bg: color-mix(in srgb, var(--age-3) 18%, var(--color-paper)); --thumb-fg: var(--age-3); }
+  .tone-age-7 { --tone-color: color-mix(in srgb, var(--age-7) 80%, black); --thumb-bg: color-mix(in srgb, var(--age-7) 22%, var(--color-paper)); --thumb-fg: color-mix(in srgb, var(--age-7) 80%, black); }
+  .tone-age-12 { --tone-color: color-mix(in srgb, var(--age-12) 80%, black); --thumb-bg: color-mix(in srgb, var(--age-12) 22%, var(--color-paper)); --thumb-fg: color-mix(in srgb, var(--age-12) 80%, black); }
+  .tone-age-16 { --tone-color: var(--age-16); --thumb-bg: color-mix(in srgb, var(--age-16) 18%, var(--color-paper)); --thumb-fg: var(--age-16); }
+  .tone-age-18 { --tone-color: var(--age-18); --thumb-bg: color-mix(in srgb, var(--age-18) 20%, var(--color-paper)); --thumb-fg: var(--age-18); }
+  .tone-unknown { --tone-color: var(--color-forest); --thumb-bg: var(--color-paper); --thumb-fg: var(--color-ink-muted); }
+
+  .body { min-inline-size: 0; }
+  .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--color-ink);
+    letter-spacing: -0.01em;
+  }
+  .age {
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: var(--radius-full);
+    line-height: 1.4;
+    flex-shrink: 0;
+  }
+  .age.age-age-3 { color: var(--age-3); }
+  .age.age-age-7 { color: color-mix(in srgb, var(--age-7) 80%, black); }
+  .age.age-age-12 { color: color-mix(in srgb, var(--age-12) 80%, black); }
+  .age.age-age-16 { color: var(--age-16); }
+  .age.age-age-18 { color: var(--age-18); }
+  .age.age-unknown { color: var(--color-ink-muted); }
+
+  .summary {
+    margin: 0.35em 0 0;
+    font-size: 0.85rem;
+    color: var(--color-ink-muted);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .source {
+    margin: 0.5em 0 0;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--color-ink-muted);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+  }
+</style>

@@ -1,0 +1,204 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, gte, lte } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { formatRelative, formatAbsolute, formatDuration } from '~/lib/format';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+const name = String(Astro.params.name ?? '').trim();
+if (!localeParam || !(locales as readonly string[]).includes(localeParam) || !name) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) return Astro.redirect(localePath(locale, '/auth/login'));
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) return Astro.redirect(localePath(locale, '/auth/login'));
+
+const dict = (locale === 'pt'
+  ? {
+      crumb: { admin: 'Admin', workers: 'Workers' },
+      title: 'Histórico —',
+      filters: { status: 'Estado', all: 'todos', from: 'De', to: 'Até', apply: 'Aplicar' },
+      table: { startedAt: 'Início', finishedAt: 'Fim', duration: 'Duração', status: 'Estado', items: 'Itens', errors: 'Erros', summary: 'Resumo de erro' },
+      empty: 'Sem execuções para estes filtros.',
+      page: 'Página', next: 'Próxima', prev: 'Anterior',
+      status: { running: 'a correr', success: 'sucesso', error: 'erro', unknown: '—' },
+      none: '—',
+    }
+  : {
+      crumb: { admin: 'Admin', workers: 'Workers' },
+      title: 'History —',
+      filters: { status: 'Status', all: 'all', from: 'From', to: 'To', apply: 'Apply' },
+      table: { startedAt: 'Started', finishedAt: 'Finished', duration: 'Duration', status: 'Status', items: 'Items', errors: 'Errors', summary: 'Error summary' },
+      empty: 'No runs for these filters.',
+      page: 'Page', next: 'Next', prev: 'Prev',
+      status: { running: 'running', success: 'success', error: 'error', unknown: '—' },
+      none: '—',
+    });
+
+type StatusFilter = 'running' | 'success' | 'error' | '';
+const rawStatus = Astro.url.searchParams.get('status') ?? '';
+const ALLOWED_STATUSES = ['running', 'success', 'error'] as const;
+type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
+const status: StatusFilter = (ALLOWED_STATUSES as readonly string[]).includes(rawStatus)
+  ? (rawStatus as AllowedStatus)
+  : '';
+const fromStr = Astro.url.searchParams.get('from') ?? '';
+const toStr   = Astro.url.searchParams.get('to') ?? '';
+const fromDate = fromStr ? new Date(fromStr) : null;
+const toDate   = toStr   ? new Date(toStr)   : null;
+const validFrom = fromDate && !Number.isNaN(fromDate.getTime()) ? fromDate : null;
+const validTo   = toDate   && !Number.isNaN(toDate.getTime())   ? toDate   : null;
+
+const pageParam = Number(Astro.url.searchParams.get('page') ?? '1');
+const page = Number.isFinite(pageParam) && pageParam >= 1 ? Math.floor(pageParam) : 1;
+const pageSize = 50;
+const offset = (page - 1) * pageSize;
+
+const filters = [eq(schema.workerRun.worker, name)];
+if (status)    filters.push(eq(schema.workerRun.status, status));
+if (validFrom) filters.push(gte(schema.workerRun.startedAt, validFrom));
+if (validTo)   filters.push(lte(schema.workerRun.startedAt, validTo));
+
+const rows = await db
+  .select()
+  .from(schema.workerRun)
+  .where(and(...filters))
+  .orderBy(desc(schema.workerRun.startedAt))
+  .limit(pageSize + 1)
+  .offset(offset);
+
+const hasNext = rows.length > pageSize;
+const visible = rows.slice(0, pageSize);
+
+function badgeClass(st: string): string {
+  if (st === 'success') return 'badge badge-success';
+  if (st === 'error')   return 'badge badge-error';
+  if (st === 'running') return 'badge badge-running';
+  return 'badge badge-unknown';
+}
+
+function statusLabel(st: string): string {
+  if (st === 'running') return dict.status.running;
+  if (st === 'success') return dict.status.success;
+  if (st === 'error')   return dict.status.error;
+  return dict.status.unknown;
+}
+
+function pageHref(p: number): string {
+  const u = new URL(Astro.url);
+  u.searchParams.set('page', String(p));
+  return u.pathname + '?' + u.searchParams.toString();
+}
+---
+
+<Base title={`${dict.title} ${name}`}>
+  <section class="wrap">
+    <div class="container-page">
+      <nav class="crumbs">
+        <a href={localePath(locale, '/admin')}>{dict.crumb.admin}</a>
+        <span>›</span>
+        <a href={localePath(locale, '/admin/workers')}>{dict.crumb.workers}</a>
+        <span>›</span>
+        <span><code>{name}</code></span>
+      </nav>
+      <h1>{dict.title} <code>{name}</code></h1>
+
+      <form class="filters" method="get">
+        <label>
+          <span>{dict.filters.status}</span>
+          <select name="status">
+            <option value="">{dict.filters.all}</option>
+            <option value="running" selected={status === 'running'}>{dict.status.running}</option>
+            <option value="success" selected={status === 'success'}>{dict.status.success}</option>
+            <option value="error" selected={status === 'error'}>{dict.status.error}</option>
+          </select>
+        </label>
+        <label>
+          <span>{dict.filters.from}</span>
+          <input type="datetime-local" name="from" value={fromStr} />
+        </label>
+        <label>
+          <span>{dict.filters.to}</span>
+          <input type="datetime-local" name="to" value={toStr} />
+        </label>
+        <button type="submit">{dict.filters.apply}</button>
+      </form>
+
+      <article class="card">
+        {visible.length === 0 ? (
+          <p class="empty">{dict.empty}</p>
+        ) : (
+          <table>
+            <thead><tr>
+              <th>{dict.table.startedAt}</th>
+              <th>{dict.table.finishedAt}</th>
+              <th>{dict.table.duration}</th>
+              <th>{dict.table.status}</th>
+              <th class="n">{dict.table.items}</th>
+              <th class="n">{dict.table.errors}</th>
+              <th>{dict.table.summary}</th>
+            </tr></thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr>
+                  <td><time datetime={r.startedAt?.toISOString?.() ?? String(r.startedAt)} title={formatAbsolute(r.startedAt, locale)}>{formatRelative(r.startedAt, locale)}</time></td>
+                  <td>{r.finishedAt ? formatAbsolute(r.finishedAt, locale) : dict.none}</td>
+                  <td>{formatDuration(r.startedAt, r.finishedAt)}</td>
+                  <td><span class={badgeClass(r.status)}>{statusLabel(r.status)}</span></td>
+                  <td class="n">{r.itemsProcessed.toLocaleString(locale)}</td>
+                  <td class="n">{r.errorsCount}</td>
+                  <td class="summary">
+                    {r.errorSummary ? (
+                      <details><summary>{(r.errorSummary.split('\n')[0] ?? '').slice(0, 80)}</summary><pre>{r.errorSummary}</pre></details>
+                    ) : dict.none}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </article>
+
+      <nav class="pager">
+        {page > 1 ? <a href={pageHref(page - 1)}>← {dict.prev}</a> : <span class="muted">← {dict.prev}</span>}
+        <span class="muted">{dict.page} {page}</span>
+        {hasNext ? <a href={pageHref(page + 1)}>{dict.next} →</a> : <span class="muted">{dict.next} →</span>}
+      </nav>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-6); font-size: 1.4rem; }
+  .crumbs { display: flex; gap: var(--space-2); color: var(--color-fg-muted); font-size: 0.85rem; margin-block-end: var(--space-2); }
+  .crumbs a { color: inherit; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9em; }
+  .filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); margin-block-end: var(--space-5); padding: var(--space-4); background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+  .filters label { display: flex; flex-direction: column; gap: var(--space-1); font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .filters input, .filters select { padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); font: inherit; text-transform: none; }
+  .filters button { padding: var(--space-2) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-navy-900); color: white; font: inherit; cursor: pointer; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); vertical-align: top; }
+  th { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--color-fg-muted); margin: 0; }
+  .badge { display: inline-block; padding: 0.15em 0.6em; border-radius: 999px; font-size: 0.75rem; font-weight: 600; text-transform: lowercase; }
+  .badge-success { background: #d8efe2; color: #1f6b46; }
+  .badge-error   { background: #fadcdc; color: #8b1f1f; }
+  .badge-running { background: #d3ecec; color: #1d5a5a; }
+  .badge-unknown { background: #e4e4e4; color: #555; }
+  .summary details { cursor: pointer; }
+  .summary pre { margin-block-start: var(--space-2); white-space: pre-wrap; font-size: 0.78rem; background: var(--color-bg); padding: var(--space-2); border-radius: var(--radius-sm); }
+  .pager { display: flex; justify-content: space-between; align-items: center; margin-block-start: var(--space-4); }
+  .pager a { color: var(--color-navy-900); text-decoration: none; font-weight: 600; }
+  .pager .muted { color: var(--color-fg-muted); }
+</style>

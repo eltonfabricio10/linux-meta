@@ -1,0 +1,5 @@
+# Signing of this file is planned; left unsigned for now.
+Contact: https://github.com/biglinux/linux-meta/security/advisories/new
+Expires: 2027-05-24T00:00:00.000Z
+Preferred-Languages: en, pt
+Canonical: https://linux-meta.org/.well-known/security.txt

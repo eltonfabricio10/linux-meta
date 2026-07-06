@@ -1,0 +1,280 @@
+---
+/** Admin packages list — SSR with server-side filtering. */
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, eq, ilike, or, isNull, isNotNull, sql, desc, type SQL } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import PackageTable from '~/components/admin/PackageTable';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['translator', 'reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+// Inline labels keep this page independent from pt.json/en.json (locked).
+const L = locale === 'pt' ? {
+  title: 'Pacotes',
+  intro: 'Listagem e gestao de pacotes.',
+  search: 'Buscar (nome/slug)',
+  source: 'Origem',
+  any: 'Qualquer',
+  ptStatus: 'Status traducao PT-BR',
+  hasPt: 'Possui traducao PT-BR',
+  yes: 'Sim',
+  no: 'Nao',
+  editor: 'Editor',
+  apply: 'Aplicar',
+  reset: 'Limpar',
+  prev: 'Anterior',
+  next: 'Proximo',
+  showing: 'Mostrando',
+  of: 'de',
+  name: 'Nome',
+  license: 'Licenca',
+  popularity: 'Popularidade',
+  updatedAt: 'Atualizado',
+  empty: 'Nenhum pacote encontrado.',
+  noTranslation: 'sem traducao',
+  back: 'Painel',
+} : {
+  title: 'Packages',
+  intro: 'Browse and manage packages.',
+  search: 'Search (name/slug)',
+  source: 'Source',
+  any: 'Any',
+  ptStatus: 'PT-BR translation status',
+  hasPt: 'Has PT-BR translation',
+  yes: 'Yes',
+  no: 'No',
+  editor: 'Editor',
+  apply: 'Apply',
+  reset: 'Reset',
+  prev: 'Previous',
+  next: 'Next',
+  showing: 'Showing',
+  of: 'of',
+  name: 'Name',
+  license: 'License',
+  popularity: 'Popularity',
+  updatedAt: 'Updated',
+  empty: 'No packages found.',
+  noTranslation: 'no translation',
+  back: 'Dashboard',
+};
+
+const SOURCES = ['aur', 'debian', 'flathub', 'manjaro'] as const;
+const STATUSES = ['draft', 'reviewed', 'official'] as const;
+const EDITORS = ['codex', 'claude', 'ai', 'imported'] as const;
+const TRANSLATION_LOCALE = 'pt-br';
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim();
+const source = params.get('source') ?? '';
+const hasPt = params.get('has_pt') ?? '';
+const transStatus = params.get('status') ?? '';
+const editor = params.get('editor') ?? '';
+const limit = 50;
+const offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0);
+
+const conds: SQL[] = [];
+if (q) {
+  const like = `%${q}%`;
+  const expr = or(ilike(schema.packageTable.name, like), ilike(schema.packageTable.slug, like));
+  if (expr) conds.push(expr);
+}
+if ((SOURCES as readonly string[]).includes(source)) {
+  conds.push(eq(schema.packageTable.source, source));
+}
+if (hasPt === 'true') conds.push(isNotNull(schema.packageTranslation.packageId));
+if (hasPt === 'false') conds.push(isNull(schema.packageTranslation.packageId));
+if ((STATUSES as readonly string[]).includes(transStatus)) {
+  conds.push(eq(schema.packageTranslation.status, transStatus));
+}
+if ((EDITORS as readonly string[]).includes(editor)) {
+  if (editor === 'codex') {
+    conds.push(sql`${schema.packageTranslation.translatedBy} LIKE 'ai_codex%'`);
+  } else if (editor === 'claude') {
+    conds.push(eq(schema.packageTranslation.translatedBy, 'ai_claude_code'));
+  } else if (editor === 'ai') {
+    conds.push(sql`${schema.packageTranslation.translatedBy} LIKE 'ai\\_%' ESCAPE '\\'`);
+  } else if (editor === 'imported') {
+    conds.push(sql`${schema.packageTranslation.translatedBy} IN ('upstream', 'flathub_appstream', 'debian_ddtp', 'reingest_external')`);
+  }
+}
+
+const whereExpr = conds.length ? and(...conds) : undefined;
+
+const items = await db
+  .select({
+    id: schema.packageTable.id,
+    name: schema.packageTable.name,
+    slug: schema.packageTable.slug,
+    source: schema.packageTable.source,
+    license: schema.packageTable.licenseSpdx,
+    popularity: schema.packageTable.popularity,
+    ptStatus: schema.packageTranslation.status,
+    ptTranslatedBy: schema.packageTranslation.translatedBy,
+    ptUpdatedAt: schema.packageTranslation.updatedAt,
+  })
+  .from(schema.packageTable)
+  .leftJoin(
+    schema.packageTranslation,
+    and(
+      eq(schema.packageTranslation.packageId, schema.packageTable.id),
+      eq(schema.packageTranslation.locale, TRANSLATION_LOCALE),
+    ),
+  )
+  .where(whereExpr)
+  .orderBy(desc(schema.packageTable.popularity), schema.packageTable.name)
+  .limit(limit)
+  .offset(offset);
+
+const [{ total }] = await db
+  .select({ total: sql<number>`count(*)::int` })
+  .from(schema.packageTable)
+  .leftJoin(
+    schema.packageTranslation,
+    and(
+      eq(schema.packageTranslation.packageId, schema.packageTable.id),
+      eq(schema.packageTranslation.locale, TRANSLATION_LOCALE),
+    ),
+  )
+  .where(whereExpr);
+
+const totalNum = total ?? 0;
+const tableRows = items.map((r) => ({
+  id: r.id,
+  name: r.name,
+  slug: r.slug,
+  source: r.source,
+  license: r.license ?? null,
+  popularity: r.popularity,
+  ptStatus: r.ptStatus,
+  ptTranslatedBy: r.ptTranslatedBy,
+  ptUpdatedAt: r.ptUpdatedAt ? r.ptUpdatedAt.toISOString() : null,
+}));
+
+function pageUrl(nextOffset: number): string {
+  const sp = new URLSearchParams(params);
+  sp.set('offset', String(nextOffset));
+  return `?${sp.toString()}`;
+}
+
+const prevOffset = Math.max(0, offset - limit);
+const nextOffset = offset + limit;
+const hasPrev = offset > 0;
+const hasNext = offset + items.length < totalNum;
+---
+
+<Base title={L.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs">
+        <a href={localePath(locale, '/admin')}>{L.back}</a> / <strong>{L.title}</strong>
+      </p>
+      <h1>{L.title}</h1>
+      <p class="intro">{L.intro}</p>
+
+      <form class="filters" method="get">
+        <label>
+          <span>{L.search}</span>
+          <input name="q" value={q} maxlength="120" />
+        </label>
+        <label>
+          <span>{L.source}</span>
+          <select name="source">
+            <option value="">{L.any}</option>
+            {SOURCES.map((s) => (
+              <option value={s} selected={source === s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{L.ptStatus}</span>
+          <select name="status">
+            <option value="">{L.any}</option>
+            {STATUSES.map((s) => (
+              <option value={s} selected={transStatus === s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{L.hasPt}</span>
+          <select name="has_pt">
+            <option value="">{L.any}</option>
+            <option value="true" selected={hasPt === 'true'}>{L.yes}</option>
+            <option value="false" selected={hasPt === 'false'}>{L.no}</option>
+          </select>
+        </label>
+        <label>
+          <span>{L.editor}</span>
+          <select name="editor">
+            <option value="">{L.any}</option>
+            <option value="codex" selected={editor === 'codex'}>Codex</option>
+            <option value="claude" selected={editor === 'claude'}>Claude</option>
+            <option value="ai" selected={editor === 'ai'}>AI</option>
+            <option value="imported" selected={editor === 'imported'}>Imported</option>
+          </select>
+        </label>
+        <div class="row">
+          <button type="submit" class="primary">{L.apply}</button>
+          <a class="ghost-btn" href={Astro.url.pathname}>{L.reset}</a>
+        </div>
+      </form>
+
+      <p class="muted">{L.showing} {items.length} {L.of} {totalNum}</p>
+
+      <PackageTable
+        packages={tableRows}
+        labels={{
+          name: L.name,
+          source: L.source,
+          license: L.license,
+          popularity: L.popularity,
+          ptStatus: L.ptStatus,
+          translatedBy: L.editor,
+          updatedAt: L.updatedAt,
+          empty: L.empty,
+          noTranslation: L.noTranslation,
+          detailHref: (id) => localePath(locale, `/admin/packages/${id}`),
+        }}
+      />
+
+      <nav class="pager">
+        {hasPrev ? <a href={pageUrl(prevOffset)}>&larr; {L.prev}</a> : <span class="disabled">&larr; {L.prev}</span>}
+        {hasNext ? <a href={pageUrl(nextOffset)}>{L.next} &rarr;</a> : <span class="disabled">{L.next} &rarr;</span>}
+      </nav>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .crumbs { margin: 0 0 var(--space-3); color: var(--color-fg-muted); font-size: 0.85rem; }
+  .crumbs a { color: var(--color-cta); text-decoration: none; }
+  h1 { margin: 0 0 var(--space-2); }
+  .intro { color: var(--color-fg-muted); margin: 0 0 var(--space-6); }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); margin-block-end: var(--space-6); background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); }
+  .filters label { display: grid; gap: var(--space-1); }
+  .filters span { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .filters input, .filters select { padding: 0.55rem 0.8rem; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); font: inherit; background: var(--color-bg); color: var(--color-fg); }
+  .row { display: flex; gap: var(--space-3); align-items: end; grid-column: 1 / -1; }
+  .primary { background: var(--color-cta); color: var(--color-cta-fg); padding: 0.55rem 1.1rem; border-radius: var(--radius-full); border: none; font-weight: 700; cursor: pointer; }
+  .ghost-btn { display: inline-flex; align-items: center; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); border: 1.5px solid var(--color-border); color: var(--color-fg); text-decoration: none; }
+  .muted { color: var(--color-fg-muted); font-size: 0.85rem; margin: 0 0 var(--space-3); }
+  .pager { display: flex; gap: var(--space-4); justify-content: space-between; margin-block-start: var(--space-6); }
+  .pager a { color: var(--color-cta); text-decoration: none; font-weight: 600; }
+  .pager .disabled { color: var(--color-fg-muted); }
+</style>

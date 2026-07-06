@@ -1,0 +1,10 @@
+---
+import { locales } from '~/i18n';
+
+const locale = Astro.params.locale;
+if (!locale || !(locales as readonly string[]).includes(locale)) {
+  return new Response(null, { status: 404 });
+}
+
+return Astro.redirect(`/${locale}/transparency`, 301);
+---

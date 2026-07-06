@@ -1,0 +1,61 @@
+---
+/**
+ * Pencil chip shown only to admin/reviewer/translator roles.
+ * Click jumps to the corresponding admin page (deep-link, no modal).
+ *
+ * Reads `Astro.locals.role` populated by middleware — no DB call here.
+ *
+ * Usage:
+ *   <AdminEditChip href={`/${locale}/admin/packages/${id}?focus=summary`} label="editar resumo" />
+ */
+import { hasRole, type Role } from '~/lib/roles';
+
+interface Props {
+  href: string;
+  label?: string;
+  size?: 'sm' | 'md';
+  allow?: readonly Role[];
+  ariaLabel?: string;
+}
+
+const { href, label = 'editar', size = 'sm', allow = ['translator', 'reviewer', 'admin'], ariaLabel } = Astro.props;
+const role = Astro.locals.role;
+const show = role && hasRole(role, allow);
+---
+
+{show && (
+  <a class:list={['admin-edit-chip', size]} href={href} aria-label={ariaLabel ?? `${label}`} data-admin-chip>
+    <span class="pencil" aria-hidden="true">✎</span>
+    <span class="lbl">{label}</span>
+  </a>
+)}
+
+<style>
+  .admin-edit-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-teal-700, #1d4f54);
+    background: transparent;
+    border: 1px dashed var(--color-teal-500, #2a9d8f);
+    border-radius: 999px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+    vertical-align: middle;
+  }
+  .admin-edit-chip:hover,
+  .admin-edit-chip:focus-visible {
+    background: var(--color-teal-500, #2a9d8f);
+    color: white;
+    outline: none;
+  }
+  .admin-edit-chip.md {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.65rem;
+  }
+  .pencil { font-size: 0.85em; }
+</style>

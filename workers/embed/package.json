@@ -1,0 +1,19 @@
+{
+  "name": "@linux-meta/embed",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "init": "node --experimental-strip-types --no-warnings src/init.ts",
+    "embed": "node --experimental-strip-types --no-warnings src/worker.ts",
+    "query": "node --experimental-strip-types --no-warnings src/query.ts"
+  },
+  "dependencies": {
+    "@linux-meta/db": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}

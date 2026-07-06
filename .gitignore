@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.astro/
+.output/
+.vercel/
+
+# Env
+.env
+.env.local
+.env.*.local
+.env.prod
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Test
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Docker volumes (gitignored mount data)
+infra/docker/data/
+
+# Data exports (large, regenerable dataset — keep repo lean)
+data-export/
+
+# Generated
+drizzle/.snapshot
+graphify-out/

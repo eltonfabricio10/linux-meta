@@ -1,0 +1,283 @@
+---
+/** Admin translations management — full filters + bulk delete. */
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, eq, ilike, gte, desc, sql, type SQL } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import BulkTranslationActions from '~/components/admin/BulkTranslationActions';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['translator', 'reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const canBulk = hasRole(role, ['admin']);
+
+const STATUSES = ['draft', 'reviewed', 'official'] as const;
+const KNOWN_LOCALES = locales;
+
+const params = Astro.url.searchParams;
+const fLocale = params.get('locale') ?? '';
+const fStatus = params.get('status') ?? '';
+const fTranslatedBy = (params.get('translated_by') ?? '').trim();
+const fQ = (params.get('q') ?? '').trim();
+const fSince = (params.get('since') ?? '').trim();
+const limit = 100;
+const offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0);
+
+const conds: SQL[] = [];
+if ((KNOWN_LOCALES as readonly string[]).includes(fLocale)) {
+  conds.push(eq(schema.packageTranslation.locale, fLocale));
+}
+if ((STATUSES as readonly string[]).includes(fStatus)) {
+  conds.push(eq(schema.packageTranslation.status, fStatus));
+}
+if (fTranslatedBy) {
+  conds.push(eq(schema.packageTranslation.translatedBy, fTranslatedBy));
+}
+if (fQ) {
+  conds.push(ilike(schema.packageTable.name, `%${fQ}%`));
+}
+if (fSince) {
+  const d = new Date(fSince);
+  if (!Number.isNaN(d.getTime())) conds.push(gte(schema.packageTranslation.updatedAt, d));
+}
+const whereExpr = conds.length ? and(...conds) : undefined;
+
+const rows = await db
+  .select({
+    packageId: schema.packageTranslation.packageId,
+    locale: schema.packageTranslation.locale,
+    status: schema.packageTranslation.status,
+    translatedBy: schema.packageTranslation.translatedBy,
+    updatedAt: schema.packageTranslation.updatedAt,
+    packageName: schema.packageTable.name,
+    packageSlug: schema.packageTable.slug,
+  })
+  .from(schema.packageTranslation)
+  .innerJoin(schema.packageTable, eq(schema.packageTranslation.packageId, schema.packageTable.id))
+  .where(whereExpr)
+  .orderBy(desc(schema.packageTranslation.updatedAt))
+  .limit(limit)
+  .offset(offset);
+
+const [{ total }] = await db
+  .select({ total: sql<number>`count(*)::int` })
+  .from(schema.packageTranslation)
+  .innerJoin(schema.packageTable, eq(schema.packageTranslation.packageId, schema.packageTable.id))
+  .where(whereExpr);
+
+const totalNum = total ?? 0;
+
+const bulkRows = rows.map((r) => ({
+  packageId: r.packageId,
+  locale: r.locale,
+  packageName: r.packageName,
+  status: r.status,
+}));
+
+const L = locale === 'pt' ? {
+  title: 'Traducoes',
+  intro: 'Filtrar, editar e remover traducoes.',
+  back: 'Painel',
+  locale: 'Idioma',
+  status: 'Status',
+  translatedBy: 'Traduzido por',
+  q: 'Buscar pacote',
+  since: 'Atualizado desde',
+  any: 'Qualquer',
+  apply: 'Aplicar',
+  reset: 'Limpar',
+  showing: 'Mostrando',
+  of: 'de',
+  prev: 'Anterior',
+  next: 'Proximo',
+  bulkSelectAll: 'Selecionar todos',
+  bulkSelected: 'Selecionados',
+  bulkDelete: 'Excluir selecionados',
+  bulkConfirm: (n: number) => `Excluir ${n} traducoes?`,
+  bulkSaved: (n: number) => `${n} excluidas.`,
+  bulkError: 'Erro',
+  bulkEmpty: 'Nenhuma traducao corresponde.',
+  package: 'Pacote',
+  noBulk: 'Apenas administradores podem executar acoes em massa.',
+} : {
+  title: 'Translations',
+  intro: 'Filter, edit, and delete translations.',
+  back: 'Dashboard',
+  locale: 'Locale',
+  status: 'Status',
+  translatedBy: 'Translated by',
+  q: 'Search package',
+  since: 'Updated since',
+  any: 'Any',
+  apply: 'Apply',
+  reset: 'Reset',
+  showing: 'Showing',
+  of: 'of',
+  prev: 'Previous',
+  next: 'Next',
+  bulkSelectAll: 'Select all',
+  bulkSelected: 'Selected',
+  bulkDelete: 'Delete selected',
+  bulkConfirm: (n: number) => `Delete ${n} translations?`,
+  bulkSaved: (n: number) => `${n} deleted.`,
+  bulkError: 'Error',
+  bulkEmpty: 'No translations match.',
+  package: 'Package',
+  noBulk: 'Only admins can run bulk actions.',
+};
+
+function pageUrl(nextOffset: number): string {
+  const sp = new URLSearchParams(params);
+  sp.set('offset', String(nextOffset));
+  return `?${sp.toString()}`;
+}
+
+const prevOffset = Math.max(0, offset - limit);
+const nextOffset = offset + limit;
+const hasPrev = offset > 0;
+const hasNext = offset + rows.length < totalNum;
+
+void dict;
+---
+
+<Base title={L.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs">
+        <a href={localePath(locale, '/admin')}>{L.back}</a> / <strong>{L.title}</strong>
+      </p>
+      <h1>{L.title}</h1>
+      <p class="intro">{L.intro}</p>
+
+      <form class="filters" method="get">
+        <label>
+          <span>{L.locale}</span>
+          <select name="locale">
+            <option value="">{L.any}</option>
+            {KNOWN_LOCALES.map((l) => (
+              <option value={l} selected={fLocale === l}>{l}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{L.status}</span>
+          <select name="status">
+            <option value="">{L.any}</option>
+            {STATUSES.map((s) => (
+              <option value={s} selected={fStatus === s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{L.translatedBy}</span>
+          <input name="translated_by" value={fTranslatedBy} maxlength="64" />
+        </label>
+        <label>
+          <span>{L.q}</span>
+          <input name="q" value={fQ} maxlength="120" />
+        </label>
+        <label>
+          <span>{L.since}</span>
+          <input name="since" type="date" value={fSince} />
+        </label>
+        <div class="row">
+          <button type="submit" class="primary">{L.apply}</button>
+          <a class="ghost-btn" href={Astro.url.pathname}>{L.reset}</a>
+        </div>
+      </form>
+
+      <p class="muted">{L.showing} {rows.length} {L.of} {totalNum}</p>
+
+      {canBulk ? (
+        <BulkTranslationActions
+          client:load
+          rows={bulkRows}
+          labels={{
+            selectAll: L.bulkSelectAll,
+            selected: L.bulkSelected,
+            bulkDelete: L.bulkDelete,
+            confirmDelete: L.bulkConfirm,
+            empty: L.bulkEmpty,
+            package: L.package,
+            locale: L.locale,
+            status: L.status,
+            saved: L.bulkSaved,
+            error: L.bulkError,
+            detailHref: (pid) => localePath(locale, `/admin/packages/${pid}`),
+          }}
+        />
+      ) : (
+        <>
+          <p class="muted">{L.noBulk}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>{L.package}</th>
+                <th>{L.locale}</th>
+                <th>{L.status}</th>
+                <th>{L.translatedBy}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr>
+                  <td><a class="link" href={localePath(locale, `/admin/packages/${r.packageId}`)}>{r.packageName}</a></td>
+                  <td><code>{r.locale}</code></td>
+                  <td><span class={`chip status-${r.status}`}>{r.status}</span></td>
+                  <td class="muted">{r.translatedBy ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <nav class="pager">
+        {hasPrev ? <a href={pageUrl(prevOffset)}>&larr; {L.prev}</a> : <span class="disabled">&larr; {L.prev}</span>}
+        {hasNext ? <a href={pageUrl(nextOffset)}>{L.next} &rarr;</a> : <span class="disabled">{L.next} &rarr;</span>}
+      </nav>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .crumbs { margin: 0 0 var(--space-3); color: var(--color-fg-muted); font-size: 0.85rem; }
+  .crumbs a { color: var(--color-cta); text-decoration: none; }
+  h1 { margin: 0 0 var(--space-2); }
+  .intro { color: var(--color-fg-muted); margin: 0 0 var(--space-6); }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); margin-block-end: var(--space-6); background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); }
+  .filters label { display: grid; gap: var(--space-1); }
+  .filters span { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .filters input, .filters select { padding: 0.55rem 0.8rem; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); font: inherit; background: var(--color-bg); color: var(--color-fg); }
+  .row { display: flex; gap: var(--space-3); align-items: end; grid-column: 1 / -1; }
+  .primary { background: var(--color-cta); color: var(--color-cta-fg); padding: 0.55rem 1.1rem; border-radius: var(--radius-full); border: none; font-weight: 700; cursor: pointer; }
+  .ghost-btn { display: inline-flex; align-items: center; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); border: 1.5px solid var(--color-border); color: var(--color-fg); text-decoration: none; }
+  .muted { color: var(--color-fg-muted); font-size: 0.85rem; margin: 0 0 var(--space-3); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); }
+  th { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .link { color: var(--color-cta); text-decoration: none; font-weight: 600; }
+  .link:hover { text-decoration: underline; }
+  .chip { display: inline-block; padding: 0.15rem 0.55rem; border-radius: var(--radius-full); font-size: 0.75rem; font-weight: 600; }
+  .status-draft    { background: #fef3c7; color: #92400e; }
+  .status-reviewed { background: #ccfbf1; color: #115e59; }
+  .status-official { background: #dcfce7; color: #166534; }
+  .pager { display: flex; gap: var(--space-4); justify-content: space-between; margin-block-start: var(--space-6); }
+  .pager a { color: var(--color-cta); text-decoration: none; font-weight: 600; }
+  .pager .disabled { color: var(--color-fg-muted); }
+</style>

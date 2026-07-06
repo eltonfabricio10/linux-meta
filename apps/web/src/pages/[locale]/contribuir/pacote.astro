@@ -1,0 +1,124 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+
+const isPt = locale === 'pt';
+const tx = {
+  title: isPt ? 'Sugerir software' : 'Suggest software',
+  intro: isPt
+    ? 'Sua sugestão entra na fila de moderação. Um admin valida antes de publicar no catálogo.'
+    : 'Your suggestion enters the moderation queue. An admin must approve before it appears in the catalog.',
+  name: isPt ? 'Nome do software' : 'Software name',
+  url: isPt ? 'URL upstream (site oficial ou repo)' : 'Upstream URL (official site or repo)',
+  summary: isPt ? 'Resumo curto (1 linha)' : 'Short summary (1 line)',
+  description: isPt ? 'Descrição (opcional)' : 'Description (optional)',
+  justification: isPt ? 'Por que adicionar? (20-2000 caracteres)' : 'Why add it? (20-2000 chars)',
+  justH: isPt ? 'Relevância, lacuna no catálogo, comprovação que existe e é mantido.' : 'Relevance, catalog gap, proof it exists and is maintained.',
+  submit: isPt ? 'Enviar para moderação' : 'Submit for moderation',
+  ok: isPt ? 'Enviado. Aguardando revisão.' : 'Submitted. Awaiting review.',
+  err: isPt ? 'Falha ao enviar.' : 'Failed to submit.',
+};
+---
+
+<Base title={tx.title}>
+  <section class="wrap">
+    <div class="container-prose">
+      <h1>{tx.title}</h1>
+      <p class="intro">{tx.intro}</p>
+
+      <form id="f" class="stack">
+        <label>
+          <span>{tx.name}</span>
+          <input name="name" required minlength="2" maxlength="160" />
+        </label>
+
+        <label>
+          <span>{tx.url}</span>
+          <input name="upstreamUrl" type="url" maxlength="2000" />
+        </label>
+
+        <label>
+          <span>{tx.summary}</span>
+          <input name="summary" maxlength="500" />
+        </label>
+
+        <label>
+          <span>{tx.description}</span>
+          <textarea name="description" rows="4" maxlength="8000"></textarea>
+        </label>
+
+        <label>
+          <span>{tx.justification}</span>
+          <textarea name="justification" rows="5" required minlength="20" maxlength="2000" placeholder={tx.justH}></textarea>
+        </label>
+
+        <button type="submit" class="primary">{tx.submit}</button>
+        <p id="msg" class="msg" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+</Base>
+
+<script is:inline type="application/json" id="submission-messages" set:html={JSON.stringify({ ok: tx.ok, err: tx.err })}></script>
+<script is:inline>
+  const f = document.getElementById('f');
+  const msg = document.getElementById('msg');
+  const messages = JSON.parse(document.getElementById('submission-messages')?.textContent || '{}');
+  f?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    const data = Object.fromEntries(new FormData(f).entries());
+    for (const k of Object.keys(data)) if (typeof data[k] === 'string' && !data[k].trim()) delete data[k];
+    try {
+      const r = await fetch('/api/v1/submissions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (r.status === 201) {
+        msg.textContent = messages.ok;
+        msg.dataset.kind = 'ok';
+        f.reset();
+      } else {
+        msg.textContent = messages.err;
+        msg.dataset.kind = 'err';
+      }
+    } catch {
+      msg.textContent = messages.err;
+      msg.dataset.kind = 'err';
+    }
+  });
+</script>
+
+<style>
+  .wrap { padding-block: var(--space-16); }
+  .intro { color: var(--color-fg-muted); margin-block: var(--space-4) var(--space-8); }
+  .stack { display: grid; gap: var(--space-6); }
+  label { display: grid; gap: var(--space-2); }
+  label span { font-weight: 600; font-size: 0.9rem; }
+  input, textarea {
+    width: 100%; padding: var(--space-3); border: 1px solid var(--color-border);
+    border-radius: 6px; background: var(--color-bg); color: var(--color-fg); font: inherit;
+  }
+  textarea { resize: vertical; min-height: 5rem; }
+  button.primary {
+    padding: var(--space-3) var(--space-6); border: 0; border-radius: 6px;
+    background: var(--color-accent); color: var(--color-on-accent); font-weight: 600;
+    cursor: pointer; justify-self: start;
+  }
+  .msg { min-height: 1.25rem; }
+  .msg[data-kind='ok'] { color: var(--color-success, #2a7a48); }
+  .msg[data-kind='err'] { color: var(--color-danger, #b94f43); }
+</style>

@@ -1,0 +1,41 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales } from '~/i18n';
+import { meta } from '~/i18n/meta';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+void t(locale);
+const m = meta(locale).conduct;
+---
+
+<Base title={m.title} description={m.intro}>
+  <section class="wrap">
+    <div class="container-prose">
+      <h1>{m.title}</h1>
+      <p class="lead">{m.intro}</p>
+      <ol>
+        {m.rules.map((r) => <li>{r}</li>)}
+      </ol>
+      <p class="enforce">{m.enforce}</p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-16); }
+  h1 { margin: 0 0 var(--space-4); }
+  .lead { font-size: var(--text-lg); color: var(--color-fg-muted); margin-block-end: var(--space-8); }
+  ol { padding-inline-start: var(--space-6); display: grid; gap: var(--space-3); }
+  li { line-height: var(--leading-body); }
+  .enforce {
+    margin-block-start: var(--space-10);
+    padding: var(--space-4) var(--space-6);
+    background: color-mix(in srgb, var(--color-amber-200) 35%, transparent);
+    border-left: 4px solid var(--color-amber-400);
+    border-radius: var(--radius-sm);
+  }
+</style>

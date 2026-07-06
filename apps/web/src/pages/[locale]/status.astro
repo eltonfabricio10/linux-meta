@@ -1,0 +1,217 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+import { formatRelative, formatAbsolute } from '~/lib/format';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+const dict = (locale === 'pt'
+  ? {
+      title: 'Estado do serviço',
+      lede: 'Telemetria honesta dos workers que mantêm os dados deste site actualizados.',
+      banner: {
+        green: 'Todos os sistemas operacionais',
+        amber: 'Em observação: erros detectados nas últimas 24 horas',
+        red:   'Atenção: pelo menos um worker está silencioso há mais de 48 horas',
+        empty: 'Sem dados de execução para reportar.',
+      },
+      card: {
+        lastRun: 'Última execução com sucesso',
+        items24h: 'Itens processados (24h)',
+        status: 'Estado',
+        never: 'sem registo',
+      },
+      status: { running: 'a correr', success: 'sucesso', error: 'erro', unknown: 'desconhecido', silent: 'silencioso' },
+      footer: 'Atualizado a cada minuto. Endpoint público em ',
+    }
+  : {
+      title: 'Service status',
+      lede: 'Honest telemetry of the workers that keep this site’s data fresh.',
+      banner: {
+        green: 'All systems operational',
+        amber: 'Watching: errors detected in the last 24 hours',
+        red:   'Attention: at least one worker has been silent for more than 48 hours',
+        empty: 'No execution data to report yet.',
+      },
+      card: {
+        lastRun: 'Last successful run',
+        items24h: 'Items processed (24h)',
+        status: 'Status',
+        never: 'never recorded',
+      },
+      status: { running: 'running', success: 'success', error: 'error', unknown: 'unknown', silent: 'silent' },
+      footer: 'Refreshed every minute. Public endpoint at ',
+    });
+
+type PublicRow = {
+  worker: string;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_success_at: string | null;
+  items_24h: number;
+  errors_24h: number;
+  [k: string]: unknown;
+};
+
+const rows = await db.execute<PublicRow>(sql`
+  WITH last_run AS (
+    SELECT DISTINCT ON (worker) worker, started_at AS last_run_at, status AS last_status
+    FROM worker_run
+    ORDER BY worker, started_at DESC
+  ),
+  last_success AS (
+    SELECT DISTINCT ON (worker) worker, finished_at AS last_success_at
+    FROM worker_run
+    WHERE status = 'success'
+    ORDER BY worker, finished_at DESC
+  ),
+  agg24 AS (
+    SELECT worker,
+           COALESCE(SUM(items_processed), 0)::int AS items_24h,
+           COALESCE(SUM(errors_count), 0)::int    AS errors_24h
+    FROM worker_run
+    WHERE started_at > NOW() - INTERVAL '24 hours'
+    GROUP BY worker
+  )
+  SELECT lr.worker, lr.last_run_at, lr.last_status,
+         ls.last_success_at,
+         COALESCE(a.items_24h, 0)  AS items_24h,
+         COALESCE(a.errors_24h, 0) AS errors_24h
+  FROM last_run lr
+  LEFT JOIN last_success ls USING (worker)
+  LEFT JOIN agg24 a USING (worker)
+  ORDER BY lr.worker
+`);
+const workers = (rows as unknown as PublicRow[]);
+
+type Banner = 'green' | 'amber' | 'red' | 'empty';
+function computeBanner(items: PublicRow[]): Banner {
+  if (items.length === 0) return 'empty';
+  const now = Date.now();
+  const H36 = 36 * 60 * 60 * 1000;
+  const H48 = 48 * 60 * 60 * 1000;
+  let banner: Banner = 'green';
+  for (const w of items) {
+    const last = w.last_run_at ? new Date(w.last_run_at).getTime() : 0;
+    const silentTime = last ? now - last : Number.POSITIVE_INFINITY;
+    if (silentTime > H48) return 'red';
+    if (w.errors_24h > 0) banner = 'amber';
+    if (silentTime > H36) banner = banner === 'green' ? 'amber' : banner;
+  }
+  return banner;
+}
+const banner = computeBanner(workers);
+
+function dotClass(w: PublicRow): string {
+  if (!w.last_run_at) return 'dot dot-unknown';
+  const since = Date.now() - new Date(w.last_run_at).getTime();
+  if (since > 48 * 60 * 60 * 1000) return 'dot dot-error';
+  if (w.last_status === 'error') return 'dot dot-error';
+  if (w.last_status === 'running') return 'dot dot-running';
+  if (w.errors_24h > 0) return 'dot dot-amber';
+  return 'dot dot-success';
+}
+
+function statusLabel(w: PublicRow): string {
+  if (!w.last_run_at) return dict.status.unknown;
+  const since = Date.now() - new Date(w.last_run_at).getTime();
+  if (since > 48 * 60 * 60 * 1000) return dict.status.silent;
+  if (w.last_status === 'error')   return dict.status.error;
+  if (w.last_status === 'running') return dict.status.running;
+  if (w.last_status === 'success') return dict.status.success;
+  return dict.status.unknown;
+}
+---
+
+<Base title={dict.title} description={dict.lede}>
+  <section class="wrap">
+    <div class="container-page">
+      <h1>{dict.title}</h1>
+      <p class="lede">{dict.lede}</p>
+
+      <div class={`banner banner-${banner}`}>
+        <span class="banner-dot" aria-hidden="true"></span>
+        <strong>{dict.banner[banner]}</strong>
+      </div>
+
+      {workers.length > 0 && (
+        <div class="grid">
+          {workers.map((w) => (
+            <article class="card">
+              <header>
+                <span class={dotClass(w)} aria-hidden="true"></span>
+                <code>{w.worker}</code>
+              </header>
+              <dl>
+                <div>
+                  <dt>{dict.card.lastRun}</dt>
+                  <dd>
+                    {w.last_success_at ? (
+                      <>
+                        <time datetime={w.last_success_at}>{formatRelative(w.last_success_at, locale)}</time>
+                        <span class="muted"> · {formatAbsolute(w.last_success_at, locale)}</span>
+                      </>
+                    ) : (
+                      <span class="muted">{dict.card.never}</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{dict.card.items24h}</dt>
+                  <dd>{w.items_24h.toLocaleString(locale)}</dd>
+                </div>
+                <div>
+                  <dt>{dict.card.status}</dt>
+                  <dd>{statusLabel(w)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <p class="foot">{dict.footer}<a href="/api/v1/status"><code>/api/v1/status</code></a>.</p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-2); }
+  .lede { color: var(--color-fg-muted); margin: 0 0 var(--space-6); max-width: 56ch; }
+  .banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); border: 1px solid var(--color-border); margin-block-end: var(--space-8); }
+  .banner-dot { width: 0.75rem; height: 0.75rem; border-radius: 999px; flex-shrink: 0; }
+  .banner-green        { background: #ebf7f0; border-color: #b7dcc4; color: #1f6b46; }
+  .banner-green .banner-dot { background: #2f9e6a; }
+  .banner-amber        { background: #fff5e2; border-color: #e9cf90; color: #7a5310; }
+  .banner-amber .banner-dot { background: #d39a18; }
+  .banner-red          { background: #fce8e8; border-color: #e1a5a5; color: #8b1f1f; }
+  .banner-red .banner-dot { background: #b62929; }
+  .banner-empty        { background: var(--color-bg-elevated); color: var(--color-fg-muted); }
+  .banner-empty .banner-dot { background: #999; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-4); margin-block-end: var(--space-8); }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }
+  .card header { display: flex; align-items: center; gap: var(--space-2); margin-block-end: var(--space-4); }
+  .card code { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; color: var(--color-navy-900); }
+  dl { margin: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+  dl > div { display: flex; flex-direction: column; gap: 0; }
+  dt { font-size: 0.72rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--color-fg-muted); font-weight: 400; }
+  .dot { width: 0.6rem; height: 0.6rem; border-radius: 999px; display: inline-block; }
+  .dot-success { background: #2f9e6a; }
+  .dot-amber   { background: #d39a18; }
+  .dot-error   { background: #b62929; }
+  .dot-running { background: #1d8a8a; }
+  .dot-unknown { background: #999; }
+  .foot { color: var(--color-fg-muted); font-size: 0.85rem; margin: 0; }
+  .foot a { color: inherit; }
+</style>

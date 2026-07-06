@@ -1,0 +1,18 @@
+---
+/* Vanity route: /{locale}/age/{n} -> browse apps appropriate for age N.
+ * e.g. /pt/age/7 -> "safe apps for a 7-year-old". */
+import { locales } from '~/i18n';
+
+export const prerender = false;
+
+const { locale, n } = Astro.params;
+if (!locale || !(locales as readonly string[]).includes(locale)) {
+  return new Response(null, { status: 404 });
+}
+const age = Number.parseInt(n ?? '', 10);
+if (!Number.isInteger(age) || age < 0 || age > 18) {
+  return new Response(null, { status: 404 });
+}
+
+return Astro.redirect(`/${locale}/browse?maxAge=${age}&appsOnly=1`, 302);
+---

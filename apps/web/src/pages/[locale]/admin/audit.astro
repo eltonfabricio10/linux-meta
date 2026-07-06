@@ -1,0 +1,272 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, gte, ilike, lte, sql, type SQL } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import AuditTable, { type AuditEntry } from '~/components/admin/AuditTable';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+const actorRole = await getUserRole(Astro.locals.user.id);
+if (!hasRole(actorRole, ['admin'])) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+
+const params = Astro.url.searchParams;
+const actor = (params.get('actor') ?? '').trim().slice(0, 64);
+const action = (params.get('action') ?? '').trim().slice(0, 64);
+const entityType = (params.get('entity_type') ?? '').trim().slice(0, 64);
+const entityId = (params.get('entity_id') ?? '').trim().slice(0, 128);
+const fromRaw = (params.get('from') ?? '').trim();
+const toRaw = (params.get('to') ?? '').trim();
+const fromDate = fromRaw && !Number.isNaN(Date.parse(fromRaw)) ? new Date(fromRaw) : null;
+const toDate = toRaw && !Number.isNaN(Date.parse(toRaw)) ? new Date(toRaw) : null;
+const limitRaw = Number.parseInt(params.get('limit') ?? '100', 10);
+const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 100;
+const offsetRaw = Number.parseInt(params.get('offset') ?? '0', 10);
+const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, 1_000_000) : 0;
+
+const filters: SQL[] = [];
+if (actor) filters.push(ilike(schema.auditLog.actor, `%${actor.replace(/[\\%_]/g, (m) => `\\${m}`)}%`));
+if (action) filters.push(eq(schema.auditLog.action, action));
+if (entityType) filters.push(eq(schema.auditLog.entityType, entityType));
+if (entityId) filters.push(eq(schema.auditLog.entityId, entityId));
+if (fromDate) filters.push(gte(schema.auditLog.at, fromDate));
+if (toDate) filters.push(lte(schema.auditLog.at, toDate));
+const whereExpr = filters.length > 0 ? and(...filters) : undefined;
+
+const baseRows = db
+  .select({
+    id: schema.auditLog.id,
+    actor: schema.auditLog.actor,
+    actorEmail: schema.user.email,
+    action: schema.auditLog.action,
+    entityType: schema.auditLog.entityType,
+    entityId: schema.auditLog.entityId,
+    before: schema.auditLog.before,
+    after: schema.auditLog.after,
+    at: schema.auditLog.at,
+  })
+  .from(schema.auditLog)
+  .leftJoin(schema.user, eq(schema.auditLog.actor, schema.user.id))
+  .orderBy(desc(schema.auditLog.at))
+  .limit(limit)
+  .offset(offset);
+
+const baseTotal = db.select({ n: sql<number>`count(*)::int` }).from(schema.auditLog);
+
+const rows = await (whereExpr ? baseRows.where(whereExpr) : baseRows);
+const totalRow = await (whereExpr ? baseTotal.where(whereExpr) : baseTotal);
+const total = totalRow[0]?.n ?? 0;
+
+const entries: AuditEntry[] = rows.map((r) => ({
+  id: r.id,
+  actor: r.actor,
+  actorEmail: r.actorEmail,
+  action: r.action,
+  entityType: r.entityType,
+  entityId: r.entityId,
+  before: r.before,
+  after: r.after,
+  at: r.at.toISOString(),
+}));
+
+const labels = locale === 'pt'
+  ? {
+      title: 'Log de auditoria',
+      subtitle: 'Histórico de ações administrativas. Filtros aplicam-se à consulta.',
+      backToAdmin: '← Painel admin',
+      actor: 'Ator (id contém)',
+      action: 'Ação (exata)',
+      entityType: 'Tipo de entidade',
+      entityId: 'ID da entidade',
+      from: 'De',
+      to: 'Até',
+      limit: 'Limite',
+      filter: 'Filtrar',
+      reset: 'Limpar',
+      total: 'eventos',
+      prev: '← Anterior',
+      next: 'Próxima →',
+      table: {
+        when: 'Quando',
+        actor: 'Ator',
+        action: 'Ação',
+        entity: 'Entidade',
+        changes: 'Alterações',
+        empty: 'Nenhum evento corresponde aos filtros.',
+        before: 'Antes',
+        after: 'Depois',
+      },
+    }
+  : {
+      title: 'Audit log',
+      subtitle: 'History of admin actions. Filters scope the query.',
+      backToAdmin: '← Admin dashboard',
+      actor: 'Actor (id contains)',
+      action: 'Action (exact)',
+      entityType: 'Entity type',
+      entityId: 'Entity id',
+      from: 'From',
+      to: 'To',
+      limit: 'Limit',
+      filter: 'Filter',
+      reset: 'Reset',
+      total: 'events',
+      prev: '← Previous',
+      next: 'Next →',
+      table: {
+        when: 'When',
+        actor: 'Actor',
+        action: 'Action',
+        entity: 'Entity',
+        changes: 'Changes',
+        empty: 'No events match the current filters.',
+        before: 'Before',
+        after: 'After',
+      },
+    };
+
+function buildHref(nextOffset: number): string {
+  const sp = new URLSearchParams();
+  if (actor) sp.set('actor', actor);
+  if (action) sp.set('action', action);
+  if (entityType) sp.set('entity_type', entityType);
+  if (entityId) sp.set('entity_id', entityId);
+  if (fromRaw) sp.set('from', fromRaw);
+  if (toRaw) sp.set('to', toRaw);
+  if (limit !== 100) sp.set('limit', String(limit));
+  if (nextOffset > 0) sp.set('offset', String(nextOffset));
+  const qs = sp.toString();
+  return `/${locale}/admin/audit${qs ? `?${qs}` : ''}`;
+}
+
+const prevHref = offset > 0 ? buildHref(Math.max(0, offset - limit)) : null;
+const nextHref = offset + limit < total ? buildHref(offset + limit) : null;
+---
+
+<Base title={labels.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="back"><a href={`/${locale}/admin`}>{labels.backToAdmin}</a></p>
+      <header class="head">
+        <h1>{labels.title}</h1>
+        <p class="sub">{labels.subtitle}</p>
+      </header>
+
+      <form class="filters" method="get">
+        <label>
+          <span>{labels.actor}</span>
+          <input type="text" name="actor" value={actor} maxlength="64" />
+        </label>
+        <label>
+          <span>{labels.action}</span>
+          <input type="text" name="action" value={action} maxlength="64" />
+        </label>
+        <label>
+          <span>{labels.entityType}</span>
+          <input type="text" name="entity_type" value={entityType} maxlength="64" />
+        </label>
+        <label>
+          <span>{labels.entityId}</span>
+          <input type="text" name="entity_id" value={entityId} maxlength="128" />
+        </label>
+        <label>
+          <span>{labels.from}</span>
+          <input type="datetime-local" name="from" value={fromRaw} />
+        </label>
+        <label>
+          <span>{labels.to}</span>
+          <input type="datetime-local" name="to" value={toRaw} />
+        </label>
+        <label>
+          <span>{labels.limit}</span>
+          <input type="number" name="limit" min="1" max="500" value={String(limit)} />
+        </label>
+        <div class="actions">
+          <button type="submit" class="primary">{labels.filter}</button>
+          <a href={`/${locale}/admin/audit`} class="reset">{labels.reset}</a>
+        </div>
+      </form>
+
+      <p class="count">{total} {labels.total}</p>
+
+      <article class="card">
+        <AuditTable entries={entries} labels={labels.table} />
+      </article>
+
+      <nav class="pager" aria-label="pagination">
+        {prevHref ? <a href={prevHref} class="pgbtn">{labels.prev}</a> : <span class="pgbtn disabled">{labels.prev}</span>}
+        <span class="pginfo">{offset + 1}–{Math.min(offset + limit, total)} / {total}</span>
+        {nextHref ? <a href={nextHref} class="pgbtn">{labels.next}</a> : <span class="pgbtn disabled">{labels.next}</span>}
+      </nav>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .back { margin: 0 0 var(--space-4); }
+  .back a { color: var(--color-fg-muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .head { margin-block-end: var(--space-6); }
+  h1 { margin: 0; }
+  .sub { color: var(--color-fg-muted); margin: var(--space-2) 0 0; }
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--space-3);
+    margin-block-end: var(--space-4);
+    align-items: end;
+  }
+  .filters label { display: grid; gap: var(--space-1); }
+  .filters span { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .filters input {
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-elevated);
+    color: var(--color-fg);
+    font: inherit;
+  }
+  .filters input:focus { border-color: var(--color-teal-500); outline: none; }
+  .actions { display: flex; gap: var(--space-2); align-items: center; }
+  button.primary {
+    padding: 0.55rem 1.1rem;
+    border-radius: var(--radius-full);
+    background: var(--color-cta);
+    color: var(--color-cta-fg);
+    border: none; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .reset { color: var(--color-fg-muted); text-decoration: none; padding: 0.5rem; }
+  .reset:hover { text-decoration: underline; }
+  .count { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; }
+  .card {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .pager { display: flex; gap: var(--space-3); align-items: center; justify-content: center; margin-block-start: var(--space-6); }
+  .pgbtn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    color: var(--color-fg);
+    text-decoration: none;
+    background: var(--color-bg-elevated);
+  }
+  .pgbtn:hover { background: var(--color-bg, white); }
+  .pgbtn.disabled { opacity: 0.4; pointer-events: none; }
+  .pginfo { color: var(--color-fg-muted); font-variant-numeric: tabular-nums; }
+</style>

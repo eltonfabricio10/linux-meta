@@ -1,0 +1,239 @@
+---
+/** Admin package detail with inline edit + translations management. */
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq, asc } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import PackageDetail from '~/components/admin/PackageDetail';
+import TranslationEditPanel from '~/components/admin/TranslationEditPanel';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['translator', 'reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const idNum = Number.parseInt(Astro.params.id ?? '', 10);
+if (!Number.isFinite(idNum) || idNum <= 0) {
+  return new Response(null, { status: 404 });
+}
+
+const [pkg] = await db
+  .select()
+  .from(schema.packageTable)
+  .where(eq(schema.packageTable.id, idNum))
+  .limit(1);
+
+if (!pkg) return new Response(null, { status: 404 });
+
+const translations = await db
+  .select()
+  .from(schema.packageTranslation)
+  .where(eq(schema.packageTranslation.packageId, idNum))
+  .orderBy(asc(schema.packageTranslation.locale));
+
+const isAdmin = hasRole(role, ['admin']);
+
+const L = locale === 'pt' ? {
+  back: 'Pacotes',
+  metadata: 'Metadados',
+  source: 'Origem',
+  sourceId: 'ID origem',
+  slug: 'Slug',
+  canonicalSlug: 'Slug canonico',
+  license: 'Licenca',
+  upstreamUrl: 'URL upstream',
+  popularity: 'Popularidade',
+  installSize: 'Tamanho instalado (KB)',
+  versionDistro: 'Versao distro',
+  versionUpstream: 'Versao upstream',
+  createdAt: 'Criado em',
+  updatedAt: 'Atualizado',
+  rawMetadata: 'Metadados brutos',
+  translationsTitle: 'Traducoes',
+  save: 'Salvar',
+  saved: 'Salvo',
+  error: 'Erro',
+  edit: 'Editar',
+  delete: 'Excluir',
+  cancel: 'Cancelar',
+  confirmDelete: 'Excluir esta traducao?',
+  empty: 'Nenhuma traducao cadastrada.',
+  noEdit: 'Apenas administradores podem editar metadados.',
+  status: 'Status',
+  translatedBy: 'Traduzido por',
+  summary: 'Resumo',
+  description: 'Descricao',
+  plainExplanation: 'Explicacao simples',
+} : {
+  back: 'Packages',
+  metadata: 'Metadata',
+  source: 'Source',
+  sourceId: 'Source id',
+  slug: 'Slug',
+  canonicalSlug: 'Canonical slug',
+  license: 'License',
+  upstreamUrl: 'Upstream URL',
+  popularity: 'Popularity',
+  installSize: 'Install size (KB)',
+  versionDistro: 'Distro version',
+  versionUpstream: 'Upstream version',
+  createdAt: 'Created at',
+  updatedAt: 'Updated',
+  rawMetadata: 'Raw metadata',
+  translationsTitle: 'Translations',
+  save: 'Save',
+  saved: 'Saved',
+  error: 'Error',
+  edit: 'Edit',
+  delete: 'Delete',
+  cancel: 'Cancel',
+  confirmDelete: 'Delete this translation?',
+  empty: 'No translations stored.',
+  noEdit: 'Only admins can edit metadata.',
+  status: 'Status',
+  translatedBy: 'Translated by',
+  summary: 'Summary',
+  description: 'Description',
+  plainExplanation: 'Plain explanation',
+};
+
+const translationRows = translations.map((tr) => ({
+  locale: tr.locale,
+  status: tr.status,
+  translatedBy: tr.translatedBy,
+  summary: tr.summary,
+  description: tr.description,
+  plainExplanation: tr.plainExplanation,
+  updatedAt: tr.updatedAt ? tr.updatedAt.toISOString() : null,
+}));
+
+const rawJson = pkg.rawMetadata ? JSON.stringify(pkg.rawMetadata, null, 2) : null;
+
+const focusParam = Astro.url.searchParams.get('focus');
+const focusLocaleParam = Astro.url.searchParams.get('focusLocale');
+const META_FOCUS = new Set(['license', 'upstreamUrl', 'popularity']);
+const TRANS_FOCUS = new Set(['summary', 'description', 'plainExplanation']);
+const metaFocus = focusParam && META_FOCUS.has(focusParam) ? (focusParam as 'license' | 'upstreamUrl' | 'popularity') : null;
+const transFocus = focusParam && TRANS_FOCUS.has(focusParam) ? (focusParam as 'summary' | 'description' | 'plainExplanation') : null;
+const autoOpenLocale = transFocus ? (focusLocaleParam ?? locale) : null;
+---
+
+<Base title={pkg.name}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="crumbs">
+        <a href={localePath(locale, '/admin')}>{dict.admin.adminTitle}</a> /
+        <a href={localePath(locale, '/admin/packages')}>{L.back}</a> /
+        <strong>{pkg.name}</strong>
+      </p>
+      <h1>{pkg.name}</h1>
+      <p class="muted">{pkg.slug} · <span class="badge">{pkg.source}</span></p>
+
+      <article class="card">
+        <h2>{L.metadata}</h2>
+        <dl class="kv">
+          <dt>{L.source}</dt><dd>{pkg.source}</dd>
+          <dt>{L.sourceId}</dt><dd><code>{pkg.sourceId}</code></dd>
+          <dt>{L.slug}</dt><dd><code>{pkg.slug}</code></dd>
+          <dt>{L.canonicalSlug}</dt><dd>{pkg.canonicalSlug ?? '—'}</dd>
+          <dt>{L.license}</dt><dd>{pkg.licenseSpdx ?? '—'}</dd>
+          <dt>{L.upstreamUrl}</dt><dd>{pkg.upstreamUrl ? <a href={pkg.upstreamUrl} target="_blank" rel="noopener">{pkg.upstreamUrl}</a> : '—'}</dd>
+          <dt>{L.popularity}</dt><dd>{pkg.popularity.toLocaleString()}</dd>
+          <dt>{L.installSize}</dt><dd>{pkg.installSizeKb != null ? pkg.installSizeKb.toLocaleString() : '—'}</dd>
+          <dt>{L.versionDistro}</dt><dd>{pkg.latestVersionDistro ?? '—'}</dd>
+          <dt>{L.versionUpstream}</dt><dd>{pkg.latestVersionUpstream ?? '—'}</dd>
+          <dt>{L.createdAt}</dt><dd>{pkg.createdAt.toISOString().slice(0, 10)}</dd>
+          <dt>{L.updatedAt}</dt><dd>{pkg.updatedAt.toISOString().slice(0, 10)}</dd>
+        </dl>
+
+        {isAdmin ? (
+          <PackageDetail
+            client:load
+            packageId={pkg.id}
+            autoFocus={metaFocus}
+            initial={{
+              license: pkg.licenseSpdx ?? null,
+              upstreamUrl: pkg.upstreamUrl ?? null,
+              popularity: pkg.popularity,
+            }}
+            labels={{
+              license: L.license,
+              upstreamUrl: L.upstreamUrl,
+              popularity: L.popularity,
+              save: L.save,
+              saved: L.saved,
+              error: L.error,
+            }}
+          />
+        ) : (
+          <p class="muted">{L.noEdit}</p>
+        )}
+      </article>
+
+      <article class="card">
+        <h2>{L.translationsTitle}</h2>
+        <TranslationEditPanel
+          client:load
+          packageId={pkg.id}
+          translations={translationRows}
+          autoOpenLocale={autoOpenLocale}
+          autoFocusField={transFocus}
+          labels={{
+            locale: dict.admin.locale ?? 'Locale',
+            status: L.status,
+            translatedBy: L.translatedBy,
+            summary: L.summary,
+            description: L.description,
+            plainExplanation: L.plainExplanation,
+            updatedAt: L.updatedAt,
+            edit: L.edit,
+            save: L.save,
+            cancel: L.cancel,
+            delete: L.delete,
+            confirmDelete: L.confirmDelete,
+            empty: L.empty,
+            saved: L.saved,
+            error: L.error,
+          }}
+        />
+      </article>
+
+      {rawJson && (
+        <details class="raw">
+          <summary>{L.rawMetadata}</summary>
+          <pre>{rawJson}</pre>
+        </details>
+      )}
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .crumbs { margin: 0 0 var(--space-3); color: var(--color-fg-muted); font-size: 0.85rem; }
+  .crumbs a { color: var(--color-cta); text-decoration: none; }
+  h1 { margin: 0 0 var(--space-2); }
+  h2 { margin: 0 0 var(--space-4); font-size: 1.1rem; }
+  .muted { color: var(--color-fg-muted); margin: 0 0 var(--space-6); }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: var(--radius-full); background: var(--color-bg-elevated); border: 1px solid var(--color-border); font-size: 0.75rem; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); margin-block-end: var(--space-6); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-4); }
+  .kv dt { color: var(--color-fg-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; word-break: break-word; }
+  .raw { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); }
+  .raw summary { cursor: pointer; font-weight: 600; color: var(--color-fg-muted); }
+  .raw pre { overflow-x: auto; font-size: 0.78rem; line-height: 1.4; padding: var(--space-3); background: var(--color-bg); border-radius: var(--radius-md); margin-block-start: var(--space-3); }
+</style>

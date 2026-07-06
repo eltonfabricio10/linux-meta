@@ -1,0 +1,121 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq, desc } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) return Astro.redirect(`/${locale}/auth/login`);
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) return Astro.redirect(`/${locale}/auth/login`);
+
+const subs = await db.select({
+  id: schema.packageSubmission.id,
+  submitter: schema.packageSubmission.submitterUserId,
+  name: schema.packageSubmission.name,
+  upstreamUrl: schema.packageSubmission.upstreamUrl,
+  summary: schema.packageSubmission.summary,
+  description: schema.packageSubmission.description,
+  justification: schema.packageSubmission.justification,
+  status: schema.packageSubmission.status,
+  createdAt: schema.packageSubmission.createdAt,
+  userName: schema.user.name,
+  userEmail: schema.user.email,
+}).from(schema.packageSubmission)
+  .leftJoin(schema.user, eq(schema.user.id, schema.packageSubmission.submitterUserId))
+  .orderBy(desc(schema.packageSubmission.createdAt))
+  .limit(200);
+
+const isPt = locale === 'pt';
+const tx = {
+  title: isPt ? 'Submissões de pacotes' : 'Package submissions',
+  empty: isPt ? 'Sem submissões.' : 'No submissions.',
+  pending: isPt ? 'Pendente' : 'Pending',
+  approved: isPt ? 'Aprovada' : 'Approved',
+  rejected: isPt ? 'Rejeitada' : 'Rejected',
+  approve: isPt ? 'Aprovar' : 'Approve',
+  reject: isPt ? 'Rejeitar' : 'Reject',
+  notePh: isPt ? 'Nota opcional…' : 'Optional note…',
+};
+const statusLbl = (s: string) => s === 'pending' ? tx.pending : s === 'approved' ? tx.approved : tx.rejected;
+---
+
+<Base title={tx.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <h1>{tx.title}</h1>
+      {subs.length === 0 ? <p class="empty">{tx.empty}</p> : (
+        <ul class="items">
+          {subs.map((s) => (
+            <li class="item" data-id={s.id} data-status={s.status}>
+              <header>
+                <strong>{s.name}</strong>
+                <span class={`badge ${s.status}`}>{statusLbl(s.status)}</span>
+                <span class="by">{s.userName ?? s.submitter} ({s.userEmail})</span>
+                <time>{new Intl.DateTimeFormat(locale === 'pt' ? 'pt-BR' : 'en-US', { dateStyle: 'medium' }).format(s.createdAt)}</time>
+              </header>
+              {s.upstreamUrl && <p><a href={s.upstreamUrl} rel="noopener noreferrer" target="_blank">{s.upstreamUrl}</a></p>}
+              {s.summary && <p><em>{s.summary}</em></p>}
+              {s.description && <p class="desc">{s.description}</p>}
+              <p><strong>Justification:</strong> {s.justification}</p>
+              {s.status === 'pending' && (
+                <div class="actions">
+                  <input class="note" placeholder={tx.notePh} maxlength="2000" />
+                  <button data-action="approve">{tx.approve}</button>
+                  <button data-action="reject" class="danger">{tx.reject}</button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </section>
+</Base>
+
+<script is:inline>
+  document.querySelectorAll('.item').forEach((li) => {
+    li.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const action = btn.getAttribute('data-action');
+        const id = li.getAttribute('data-id');
+        const note = li.querySelector('.note')?.value ?? '';
+        btn.disabled = true;
+        const r = await fetch(`/api/v1/admin/submissions/${id}/decide`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action, note: note || undefined }),
+        });
+        if (r.ok) location.reload();
+        else { btn.disabled = false; alert('Failed'); }
+      });
+    });
+  });
+</script>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .items { list-style: none; padding: 0; display: grid; gap: var(--space-6); }
+  .item { padding: var(--space-6); border: 1px solid var(--color-border); border-radius: 8px; }
+  .item header { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-block-end: var(--space-3); }
+  .by { color: var(--color-fg-muted); font-size: 0.85rem; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge.pending { background: #f3e5b8; color: #6b4f00; }
+  .badge.approved { background: #c7e8d2; color: #1f5f37; }
+  .badge.rejected { background: #f3c8c2; color: #6b1f17; }
+  time { margin-inline-start: auto; font-size: 0.8rem; color: var(--color-fg-muted); }
+  .desc { white-space: pre-wrap; }
+  .actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-block-start: var(--space-3); }
+  .actions .note { flex: 1; min-width: 200px; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: 6px; }
+  button { padding: var(--space-2) var(--space-4); border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); cursor: pointer; }
+  button.danger { color: #b94f43; border-color: #b94f43; }
+  .empty { color: var(--color-fg-muted); }
+</style>

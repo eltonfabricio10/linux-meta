@@ -1,0 +1,170 @@
+---
+/**
+ * FacetBar — GET-driven facet controls for /browse. SSR + shareable URLs,
+ * no client framework. Exploits package_profile + rating_current columns.
+ * Age-appropriateness is first-class (top control).
+ */
+import type { Locale } from '~/i18n';
+import type { CatalogFacets } from '~/lib/categories';
+
+interface Props {
+  locale: Locale;
+  action: string;            // page path (category preserved via hidden inputs)
+  category?: string | null;
+  subcategory?: string | null;
+  q?: string | null;
+  facets: CatalogFacets;
+}
+
+const { locale, action, category, subcategory, q, facets } = Astro.props;
+const isPt = locale === 'pt';
+
+const ages = [3, 7, 10, 12, 14, 16, 18];
+const types: Array<[string, string, string]> = [
+  ['app', 'Aplicativos', 'Apps'],
+  ['game', 'Jogos', 'Games'],
+  ['library', 'Bibliotecas', 'Libraries'],
+  ['theme', 'Temas', 'Themes'],
+  ['font', 'Fontes', 'Fonts'],
+  ['service', 'Serviços', 'Services'],
+  ['driver', 'Drivers', 'Drivers'],
+  ['runtime', 'Runtimes', 'Runtimes'],
+];
+const ifaces: Array<[string, string, string]> = [
+  ['gui', 'Gráfica (GUI)', 'Graphical (GUI)'],
+  ['cli', 'Linha de comando', 'Command line'],
+  ['tui', 'Terminal (TUI)', 'Terminal (TUI)'],
+  ['web', 'Web', 'Web'],
+  ['server', 'Servidor', 'Server'],
+];
+const sources = ['flathub', 'manjaro', 'aur', 'debian'];
+const lbl = (pt: string, en: string) => (isPt ? pt : en);
+---
+
+<form class="facetbar" method="get" action={action} role="search">
+  {category && <input type="hidden" name="category" value={category} />}
+  {subcategory && <input type="hidden" name="subcategory" value={subcategory} />}
+  {q && <input type="hidden" name="q" value={q} />}
+
+  <div class="facet facet-age">
+    <label for="f-age">{lbl('Apropriado para a idade', 'Appropriate for age')}</label>
+    <select id="f-age" name="maxAge">
+      <option value="">{lbl('Qualquer idade', 'Any age')}</option>
+      {ages.map((a) => (
+        <option value={String(a)} selected={facets.maxAge === a}>{lbl(`até ${a} anos`, `up to ${a}`)}</option>
+      ))}
+    </select>
+  </div>
+
+  <div class="facet">
+    <label for="f-type">{lbl('Tipo', 'Type')}</label>
+    <select id="f-type" name="type">
+      <option value="">{lbl('Todos', 'All')}</option>
+      {types.map(([v, pt, en]) => (
+        <option value={v} selected={facets.componentType === v}>{lbl(pt, en)}</option>
+      ))}
+    </select>
+  </div>
+
+  <div class="facet">
+    <label for="f-iface">{lbl('Interface', 'Interface')}</label>
+    <select id="f-iface" name="iface">
+      <option value="">{lbl('Qualquer', 'Any')}</option>
+      {ifaces.map(([v, pt, en]) => (
+        <option value={v} selected={facets.interfaceKind === v}>{lbl(pt, en)}</option>
+      ))}
+    </select>
+  </div>
+
+  <div class="facet">
+    <label for="f-source">{lbl('Fonte', 'Source')}</label>
+    <select id="f-source" name="source">
+      <option value="">{lbl('Todas', 'All')}</option>
+      {sources.map((s) => (
+        <option value={s} selected={facets.source === s}>{s}</option>
+      ))}
+    </select>
+  </div>
+
+  <label class="facet-check">
+    <input type="checkbox" name="appsOnly" value="1" checked={!!facets.appsOnly} />
+    <span>{lbl('Só o que dá para usar', 'Usable apps only')}</span>
+  </label>
+
+  <label class="facet-check">
+    <input type="checkbox" name="includeUnrated" value="1" checked={!!facets.includeUnrated} />
+    <span>{lbl('Incluir sem classificação', 'Include unrated')}</span>
+  </label>
+
+  <button type="submit" class="facet-apply">{lbl('Filtrar', 'Filter')}</button>
+</form>
+
+<script>
+  // Progressive enhancement: auto-submit on change (form still works without JS).
+  const form = document.currentScript?.previousElementSibling as HTMLFormElement | null;
+  form?.querySelectorAll('select, input[type="checkbox"]').forEach((el) => {
+    el.addEventListener('change', () => form.submit());
+  });
+</script>
+
+<style>
+  .facetbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    margin-block-end: var(--space-6);
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-lg);
+  }
+  .facet { display: flex; flex-direction: column; gap: 4px; }
+  .facet label {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-ink-muted);
+  }
+  .facet-age label { color: var(--color-forest); }
+  .facet select {
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-md);
+    background: var(--color-paper);
+    color: var(--color-ink);
+    min-inline-size: 9rem;
+  }
+  .facet-age select { border-color: color-mix(in srgb, var(--color-forest) 40%, var(--color-rule)); }
+  .facet select:focus { outline: none; border-color: var(--color-forest); }
+  .facet-check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.85rem;
+    color: var(--color-ink);
+    cursor: pointer;
+    padding-block-end: 0.4rem;
+  }
+  .facet-apply {
+    margin-inline-start: auto;
+    padding: 0.45rem 1.1rem;
+    background: var(--color-forest);
+    color: var(--color-on-accent);
+    border: none;
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .facet-apply:hover { background: var(--color-forest-hover); }
+  @media (max-width: 600px) {
+    .facet select { min-inline-size: 0; inline-size: 100%; }
+    .facet { flex: 1 1 45%; }
+    .facet-apply { margin-inline-start: 0; inline-size: 100%; }
+  }
+</style>

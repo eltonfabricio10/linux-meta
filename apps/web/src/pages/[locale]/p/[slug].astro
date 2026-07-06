@@ -1,0 +1,524 @@
+---
+import Base from '~/layouts/Base.astro';
+import RatingBadge from '~/components/RatingBadge.astro';
+import ProvenanceChip from '~/components/ProvenanceChip.astro';
+import EditOverlay from '~/components/EditOverlay.astro';
+import EditorialGrid from '~/components/layout/EditorialGrid.astro';
+import Container from '~/components/layout/Container.astro';
+import RuleDivider from '~/components/layout/RuleDivider.astro';
+import FactChips from '~/components/pkg/FactChips.astro';
+import ScreenshotGallery from '~/components/pkg/ScreenshotGallery.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { getPackageDetail } from '~/lib/packages';
+import { db, schema } from '~/lib/db';
+import { eq, desc } from 'drizzle-orm';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const slug = Astro.params.slug;
+if (!slug) return new Response(null, { status: 404 });
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+
+const detail = await getPackageDetail(slug, locale);
+if (!detail) {
+  return new Response(dict.pkg.notFound, { status: 404 });
+}
+const { pkg, rating, translation, variants, profile, screenshots } = detail;
+const raw = (pkg.rawMetadata ?? {}) as Record<string, unknown>;
+const summary = translation?.summary ?? (raw['desc'] as string | undefined) ?? null;
+const description = translation?.description ?? null;
+/* Plain-language explanation is the differentiator — show it above the upstream text. */
+const plainExpl = translation?.plainExplanation?.trim() || null;
+const showPlain = plainExpl && plainExpl !== description?.trim();
+const installMb = pkg.installSizeKb ? (pkg.installSizeKb / 1024).toFixed(1) : null;
+const oars = (rating?.oars ?? null) as Record<string, string> | null;
+
+/* Distinct distro sources for "same app · N sources". */
+const sourceCount = new Set(variants.map((v) => v.source)).size;
+/* Launch hint from profile (binaries/command/desktop id). */
+const binaries = Array.isArray(profile?.providedBinaries)
+  ? (profile!.providedBinaries as string[]).filter((b) => typeof b === 'string').slice(0, 8)
+  : [];
+const launchHint = profile?.launchCommand ?? profile?.launchId ?? binaries[0] ?? null;
+
+const [permRow] = await db
+  .select()
+  .from(schema.permissionAnalysis)
+  .where(eq(schema.permissionAnalysis.packageId, pkg.id))
+  .limit(1);
+const [healthRow] = await db
+  .select()
+  .from(schema.projectHealth)
+  .where(eq(schema.projectHealth.packageId, pkg.id))
+  .limit(1);
+const cveRows = await db
+  .select()
+  .from(schema.cveLink)
+  .where(eq(schema.cveLink.packageId, pkg.id))
+  .orderBy(desc(schema.cveLink.observedAt))
+  .limit(5);
+
+const permRisk = (permRow?.riskLevel ?? null) as 'low' | 'medium' | 'high' | 'unknown' | null;
+const permLabel: Record<string, string> = {
+  low: dict.pkg.permsLow,
+  medium: dict.pkg.permsMedium,
+  high: dict.pkg.permsHigh,
+  unknown: dict.pkg.permsUnknown,
+};
+const permsObj = (permRow?.perms ?? null) as Record<string, unknown> | null;
+const permBullets: string[] = [];
+if (permsObj) {
+  for (const [k, v] of Object.entries(permsObj)) {
+    if (Array.isArray(v) && v.length) permBullets.push(`${k}: ${v.join(', ')}`);
+  }
+}
+
+const healthStatus = (healthRow?.status ?? null) as 'active' | 'maintained' | 'abandoned' | 'unknown' | null;
+const healthLabel: Record<string, string> = {
+  active: dict.pkg.healthActive,
+  maintained: dict.pkg.healthMaintained,
+  abandoned: dict.pkg.healthAbandoned,
+  unknown: dict.pkg.healthUnknown,
+};
+const lastCommitStr = healthRow?.lastCommitAt
+  ? new Date(healthRow.lastCommitAt).toLocaleDateString(isPt ? 'pt-BR' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  : null;
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+}
+---
+
+<Base title={pkg.name} description={summary ?? `${pkg.name} — ${dict.site.tagline}`}>
+  <Container width="wide">
+    <nav class="crumbs" aria-label="breadcrumb">
+      <a href={localePath(locale, '/browse')}>{dict.nav.browse}</a>
+      <span aria-hidden="true">·</span>
+      <span class="here">{pkg.name}</span>
+    </nav>
+  </Container>
+  <EditorialGrid>
+      <header class="eg-main ficha-head">
+        <p class="kicker">FICHA · {pkg.source.toUpperCase()}</p>
+        <div class="id-row">
+          {pkg.iconUrl && (
+            <img class="pkg-icon" src={pkg.iconUrl} alt="" width="72" height="72" loading="eager" decoding="async" />
+          )}
+          <EditOverlay
+            href={localePath(locale, `/admin/packages/${pkg.id}?focus=summary&focusLocale=${locale}`)}
+            field={isPt ? 'resumo' : 'summary'}
+            block
+          >
+            <h1 class="title">{pkg.name}</h1>
+            {summary && <p class="lead">{summary}</p>}
+          </EditOverlay>
+        </div>
+        <FactChips locale={locale} profile={profile} sourceCount={sourceCount} />
+        {translation && (
+          <div class="prov-row">
+            <ProvenanceChip
+              source={translation.translatedBy === 'upstream' ? 'upstream' : translation.translatedBy}
+              locale={locale}
+              status={translation.status}
+              date={translation.updatedAt}
+            />
+            <small class="loc-label">
+              {isPt ? 'descrição em' : 'description in'} <code>{translation.locale}</code>
+              {translation.isFallback && (isPt ? ' · fallback' : ' · fallback')}
+            </small>
+          </div>
+        )}
+      </header>
+
+      <aside class="eg-margin-end margin-meta" aria-label={isPt ? 'Metadados' : 'Metadata'}>
+        <EditOverlay
+          href={localePath(locale, `/admin/ratings?package=${pkg.id}`)}
+          field={isPt ? 'classificação' : 'rating'}
+          block
+        >
+          <RatingBadge
+            ageMin={rating?.ageMin ?? null}
+            source={rating?.dominantSource ?? null}
+            oars={oars}
+            label={dict.pkg.rating}
+            pendingLabel={dict.pkg.ratingPending}
+            compact={rating?.ageMin == null}
+          />
+        </EditOverlay>
+        {rating && (
+          <ProvenanceChip
+            source={rating.dominantSource}
+            locale={locale}
+            date={rating.computedAt as unknown as string}
+          />
+        )}
+        <div class="margin-actions">
+          <a class="dispute" href={localePath(locale, `/disputar/${pkg.id}`)}>{dict.pkg.disputeCta}</a>
+        </div>
+
+        <dl class="margin-dl">
+          {pkg.latestVersionDistro && (
+            <>
+              <dt>{dict.pkg.version}</dt>
+              <dd><code>{pkg.latestVersionDistro}</code></dd>
+            </>
+          )}
+          {pkg.licenseSpdx && (
+            <>
+              <dt>{dict.pkg.license}</dt>
+              <dd>{pkg.licenseSpdx}</dd>
+            </>
+          )}
+          {installMb && (
+            <>
+              <dt>{dict.pkg.installSize}</dt>
+              <dd>{installMb} MB</dd>
+            </>
+          )}
+          {pkg.upstreamUrl && (
+            <>
+              <dt>{dict.pkg.upstream}</dt>
+              <dd class="trunc"><a href={pkg.upstreamUrl} rel="noopener external">{pkg.upstreamUrl.replace(/^https?:\/\//, '')}</a></dd>
+            </>
+          )}
+          <dt>{dict.pkg.source}</dt>
+          <dd>
+            <ul class="src-list">
+              {variants.map((v) => (
+                <li class={`src-tag src-${v.source}`} title={v.sourceId}>
+                  <span class="src-name">{v.source}</span>
+                  {v.latestVersionDistro && <span class="src-ver">{v.latestVersionDistro}</span>}
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </dl>
+      </aside>
+
+      <div class="eg-main body">
+        {showPlain && (
+          <aside class="plain-callout">
+            <p class="plain-cap">{isPt ? 'Em palavras simples' : 'In plain words'}</p>
+            <p class="plain-text">{plainExpl}</p>
+          </aside>
+        )}
+
+        <ScreenshotGallery locale={locale} screenshots={screenshots} />
+
+        {description && (
+          <EditOverlay
+            href={localePath(locale, `/traduzir?package=${pkg.id}&locale=${translation?.locale ?? locale}`)}
+            field={isPt ? 'descrição' : 'description'}
+            block
+          >
+            <article class="section">
+              <header class="sec-h">
+                <h2>{dict.pkg.description}</h2>
+              </header>
+              <div class="prose" set:html={description.split(/\n\n+/).map((p) => `<p>${escapeHtml(p)}</p>`).join('')} />
+            </article>
+          </EditOverlay>
+        )}
+
+        {(launchHint || binaries.length > 0) && (
+          <>
+            <RuleDivider tone="ink" variant="thin" />
+            <section class="section">
+              <h2>{isPt ? 'Como rodar' : 'How to run'}</h2>
+              {launchHint && (
+                <p class="launch"><code>{launchHint}</code></p>
+              )}
+              {binaries.length > 0 && (
+                <p class="muted small">
+                  {isPt ? 'Comandos:' : 'Commands:'}
+                  {binaries.map((b) => <code class="bin">{b}</code>)}
+                </p>
+              )}
+            </section>
+          </>
+        )}
+
+        <RuleDivider tone="ink" variant="thin" />
+        <section class="section">
+          <h2>{dict.pkg.perms}</h2>
+          {permRow ? (
+            <>
+              <p class={`tone tone-${permRisk}`}>{permLabel[permRisk ?? 'unknown']}</p>
+              {permRow.summary && <p class="muted">{permRow.summary}</p>}
+              {permBullets.length > 0 && (
+                <ul class="bullets">
+                  {permBullets.map((b) => <li>{b}</li>)}
+                </ul>
+              )}
+            </>
+          ) : (
+            <p class="muted">{isPt
+              ? 'Permissões ainda não analisadas para esta fonte.'
+              : 'Permissions not analysed for this source yet.'}</p>
+          )}
+        </section>
+
+        {healthRow && (
+          <>
+            <RuleDivider tone="ink" variant="thin" />
+            <section class="section">
+              <h2>{dict.pkg.health}</h2>
+              <p class={`tone tone-${healthStatus}`}>{healthLabel[healthStatus ?? 'unknown']}</p>
+              {lastCommitStr && (
+                <p class="muted">{dict.pkg.lastCommit}: <time>{lastCommitStr}</time></p>
+              )}
+            </section>
+          </>
+        )}
+
+        {cveRows.length > 0 && (
+          <>
+            <RuleDivider tone="terracotta" variant="thin" />
+            <section class="section">
+              <h2>{dict.pkg.cve}</h2>
+              <ul class="cves">
+                {cveRows.map((c) => (
+                  <li>
+                    <div class="cve-head">
+                      <strong>{c.cveId}</strong>
+                      <span class={`tone tone-sev-${c.severity}`}>{c.severity}</span>
+                    </div>
+                    {c.summary && <p class="muted">{c.summary}</p>}
+                    {c.fixedInVersion && <p class="muted"><small>{isPt ? 'corrigido em' : 'fixed in'} {c.fixedInVersion}</small></p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </>
+        )}
+      </div>
+  </EditorialGrid>
+</Base>
+
+<style>
+  .crumbs {
+    display: flex;
+    gap: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-muted);
+    margin-block: var(--space-8) var(--space-6);
+    text-transform: uppercase;
+  }
+  .crumbs a { color: var(--color-forest); text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+  .crumbs .here { color: var(--color-ink); }
+
+  .ficha-head { margin-block-end: var(--space-6); }
+  .id-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-5);
+    align-items: start;
+  }
+  .id-row > :global(.edit-overlay), .id-row > * { min-inline-size: 0; }
+  .pkg-icon {
+    inline-size: 72px;
+    block-size: 72px;
+    border-radius: var(--radius-lg);
+    object-fit: contain;
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    padding: 6px;
+  }
+  @media (max-width: 520px) { .pkg-icon { inline-size: 56px; block-size: 56px; } }
+
+  .plain-callout {
+    padding: var(--space-5) var(--space-6);
+    background: var(--brand-gradient-soft), var(--color-paper-elev);
+    border-inline-start: 4px solid var(--color-forest);
+    border-radius: var(--radius-lg);
+    max-inline-size: 64ch;
+  }
+  .plain-cap {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-forest);
+    margin: 0 0 var(--space-2);
+  }
+  .plain-text {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.18rem;
+    line-height: 1.6;
+    color: var(--color-ink);
+  }
+  .launch code {
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+    background: var(--color-paper-elev);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    color: var(--color-ink);
+  }
+  .bin {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-ink);
+    margin-inline-start: var(--space-2);
+  }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-terracotta);
+    margin: 0 0 var(--space-3);
+  }
+  .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-style: normal;
+    font-size: clamp(2.2rem, 3vw + 1rem, 3.2rem);
+    line-height: 1.05;
+    margin: 0;
+    font-variation-settings: "opsz" 48;
+    letter-spacing: -0.01em;
+  }
+  .lead {
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 1.1rem;
+    line-height: 1.55;
+    color: var(--color-ink);
+    margin: var(--space-4) 0 0;
+    max-inline-size: 62ch;
+  }
+  .prov-row {
+    display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap;
+    margin-block-start: var(--space-4);
+  }
+  .loc-label {
+    color: var(--color-ink-muted);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+  .loc-label code { font-family: var(--font-mono); }
+
+  .margin-meta {
+    display: flex; flex-direction: column;
+    gap: var(--space-4);
+    padding-block-start: var(--space-2);
+    font-size: var(--text-sm);
+    grid-row: 1 / span 2;
+  }
+  @media (max-width: 960px) {
+    .margin-meta { grid-row: auto; }
+  }
+  .margin-actions { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+  .dispute {
+    color: var(--color-terracotta);
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
+  }
+  .dispute:hover { color: var(--color-terracotta-hover); }
+
+  .margin-dl {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+    margin: 0;
+    border-block-start: 1px solid var(--color-rule);
+    padding-block-start: var(--space-4);
+  }
+  .margin-dl dt {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    margin-block-start: var(--space-2);
+  }
+  .margin-dl dt:first-of-type { margin-block-start: 0; }
+  .margin-dl dd { margin: 0; font-size: 0.92rem; color: var(--color-ink); }
+  .margin-dl dd.trunc {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .margin-dl dd code { font-family: var(--font-mono); font-size: 0.84rem; }
+  .margin-dl dd a { color: var(--color-forest); text-decoration: none; }
+  .margin-dl dd a:hover { text-decoration: underline; }
+
+  .src-list {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: var(--space-1);
+  }
+  .src-tag {
+    display: flex; justify-content: space-between; gap: var(--space-2);
+    border-inline-start: 3px solid var(--color-rule);
+    padding: 2px var(--space-2) 2px 8px;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+  }
+  .src-tag .src-name { color: var(--color-ink); text-transform: lowercase; }
+  .src-tag .src-ver { color: var(--color-ink-muted); }
+  .src-flathub  { border-inline-start-color: var(--color-slate-blue); }
+  .src-manjaro  { border-inline-start-color: var(--age-3); }
+  .src-aur      { border-inline-start-color: var(--color-terracotta); }
+  .src-debian   { border-inline-start-color: var(--age-12); }
+
+  .body { display: flex; flex-direction: column; gap: var(--space-8); margin-block-start: var(--space-6); }
+  .section { max-inline-size: 62ch; }
+  .sec-h { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+  .section h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.4rem;
+    margin: 0 0 var(--space-3);
+    font-variation-settings: "opsz" 24;
+    color: var(--color-ink);
+  }
+  .prose p { margin: 0 0 var(--space-4); line-height: 1.65; color: var(--color-ink); font-family: var(--font-sans); font-size: 1.02rem; }
+  .prose p:last-child { margin-block-end: 0; }
+  .muted { color: var(--color-ink-muted); margin: var(--space-2) 0; }
+  .bullets { margin: var(--space-3) 0 0; padding-inline-start: 1.2rem; }
+  .bullets li { margin-block: var(--space-1); font-family: var(--font-mono); font-size: 0.84rem; color: var(--color-ink); }
+
+  .tone {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px var(--space-2) 2px 8px;
+    border-inline-start: 3px solid var(--color-rule);
+    color: var(--color-ink);
+  }
+  .tone-low, .tone-active { border-inline-start-color: var(--age-3); }
+  .tone-medium, .tone-maintained, .tone-sev-medium { border-inline-start-color: var(--age-12); }
+  .tone-high, .tone-abandoned, .tone-sev-high, .tone-sev-critical { border-inline-start-color: var(--color-terracotta); }
+  .tone-unknown, .tone-sev-unknown, .tone-sev-low { border-inline-start-color: var(--color-rule); border-inline-start-style: dashed; }
+
+  .cves { list-style: none; padding: 0; margin: 0; }
+  .cves li {
+    padding: var(--space-3) 0;
+    border-block-start: 1px dashed var(--color-rule);
+  }
+  .cves li:first-child { border-block-start: none; padding-block-start: 0; }
+  .cve-head { display: flex; align-items: center; gap: var(--space-3); }
+  .cves strong { font-family: var(--font-mono); font-size: 0.92rem; color: var(--color-ink); }
+
+  @media (max-width: 960px) {
+    .margin-meta { border-block-start: 1px solid var(--color-rule); padding-block-start: var(--space-6); }
+  }
+</style>

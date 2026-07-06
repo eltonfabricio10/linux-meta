@@ -1,0 +1,25 @@
+{
+  "name": "@linux-meta/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "manjaro": "node --experimental-strip-types --no-warnings src/manjaro.ts",
+    "flathub": "node --experimental-strip-types --no-warnings src/flathub.ts",
+    "aur": "node --experimental-strip-types --no-warnings src/aur.ts",
+    "debian": "node --experimental-strip-types --no-warnings src/debian.ts",
+    "all": "pnpm run manjaro && pnpm run flathub && pnpm run aur && pnpm run debian",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@linux-meta/db": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.8.0",
+    "tar-stream": "^3.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/tar-stream": "^3.1.4",
+    "typescript": "^6.0.3"
+  }
+}

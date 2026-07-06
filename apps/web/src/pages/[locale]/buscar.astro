@@ -1,0 +1,12 @@
+---
+import { locales, localePath } from '~/i18n';
+
+const locale = Astro.params.locale;
+if (!locale || !(locales as readonly string[]).includes(locale)) {
+  return new Response(null, { status: 404 });
+}
+
+const target = new URL(localePath(locale as (typeof locales)[number], '/browse'), Astro.url);
+target.search = Astro.url.search;
+return Astro.redirect(target.pathname + target.search, 301);
+---

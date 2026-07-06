@@ -1,0 +1,269 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { getUserRole, hasRole, type Role } from '~/lib/roles';
+import UserTable, { type UserRow } from '~/components/admin/UserTable';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+const actorRole = await getUserRole(Astro.locals.user.id);
+if (!hasRole(actorRole, ['admin'])) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+
+const labels = locale === 'pt'
+  ? {
+      title: 'Usuários',
+      subtitle: 'Gerenciar contas, papéis e banimentos.',
+      backToAdmin: '← Painel admin',
+      searchPlaceholder: 'Buscar por nome ou e-mail',
+      roleAll: 'Todos os papéis',
+      banAll: 'Todos os status',
+      banOnly: 'Apenas banidos',
+      banNone: 'Apenas ativos',
+      filter: 'Filtrar',
+      reset: 'Limpar',
+      total: 'usuários encontrados',
+      prev: '← Anterior',
+      next: 'Próxima →',
+      table: {
+        name: 'Nome',
+        email: 'E-mail',
+        role: 'Papel',
+        status: 'Status',
+        sessions: 'Sessões',
+        created: 'Criado em',
+        active: 'Ativo',
+        banned: 'Banido',
+        unverified: 'Não verificado',
+        empty: 'Nenhum usuário corresponde aos filtros.',
+        detailHref: (id: string) => `/${locale}/admin/users/${id}`,
+      },
+      roles: {
+        visitor: 'Visitante',
+        contributor: 'Colaborador',
+        translator: 'Tradutor',
+        reviewer: 'Revisor',
+        admin: 'Admin',
+      } as Record<Role, string>,
+    }
+  : {
+      title: 'Users',
+      subtitle: 'Manage accounts, roles, and bans.',
+      backToAdmin: '← Admin dashboard',
+      searchPlaceholder: 'Search by name or email',
+      roleAll: 'All roles',
+      banAll: 'All statuses',
+      banOnly: 'Banned only',
+      banNone: 'Active only',
+      filter: 'Filter',
+      reset: 'Reset',
+      total: 'users found',
+      prev: '← Previous',
+      next: 'Next →',
+      table: {
+        name: 'Name',
+        email: 'Email',
+        role: 'Role',
+        status: 'Status',
+        sessions: 'Sessions',
+        created: 'Created',
+        active: 'Active',
+        banned: 'Banned',
+        unverified: 'Unverified',
+        empty: 'No users match the current filters.',
+        detailHref: (id: string) => `/${locale}/admin/users/${id}`,
+      },
+      roles: {
+        visitor: 'Visitor',
+        contributor: 'Contributor',
+        translator: 'Translator',
+        reviewer: 'Reviewer',
+        admin: 'Admin',
+      } as Record<Role, string>,
+    };
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 120);
+const roleFilterRaw = params.get('role') ?? '';
+const roleFilter = (['visitor', 'contributor', 'translator', 'reviewer', 'admin'] as const).includes(
+  roleFilterRaw as Role,
+) ? (roleFilterRaw as Role) : null;
+const bannedRaw = params.get('banned');
+const bannedFilter = bannedRaw === 'true' ? true : bannedRaw === 'false' ? false : null;
+const limit = 50;
+const offsetRaw = Number.parseInt(params.get('offset') ?? '0', 10);
+const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, 1_000_000) : 0;
+
+const filters = [];
+if (q) {
+  const pattern = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+  filters.push(or(ilike(schema.user.name, pattern), ilike(schema.user.email, pattern))!);
+}
+if (roleFilter) filters.push(eq(schema.user.role, roleFilter));
+if (bannedFilter !== null) filters.push(eq(schema.user.banned, bannedFilter));
+const whereExpr = filters.length > 0 ? and(...filters) : undefined;
+
+const sessionCountSql = sql<number>`(
+  select count(*)::int from ${schema.session}
+  where ${schema.session.userId} = ${schema.user.id}
+    and ${schema.session.expiresAt} > now()
+)`;
+
+const baseRowsQuery = db
+  .select({
+    id: schema.user.id,
+    name: schema.user.name,
+    email: schema.user.email,
+    role: schema.user.role,
+    banned: schema.user.banned,
+    emailVerified: schema.user.emailVerified,
+    sessionCount: sessionCountSql,
+    createdAt: schema.user.createdAt,
+  })
+  .from(schema.user)
+  .orderBy(desc(schema.user.createdAt))
+  .limit(limit)
+  .offset(offset);
+
+const baseTotalQuery = db.select({ n: sql<number>`count(*)::int` }).from(schema.user);
+
+const rows = await (whereExpr ? baseRowsQuery.where(whereExpr) : baseRowsQuery);
+const totalRow = await (whereExpr ? baseTotalQuery.where(whereExpr) : baseTotalQuery);
+const total = totalRow[0]?.n ?? 0;
+
+const users: UserRow[] = rows.map((r) => ({
+  id: r.id,
+  name: r.name,
+  email: r.email,
+  role: r.role as Role,
+  banned: r.banned,
+  emailVerified: r.emailVerified,
+  sessionCount: r.sessionCount,
+  createdAt: r.createdAt.toISOString(),
+}));
+
+function buildHref(nextOffset: number): string {
+  const sp = new URLSearchParams();
+  if (q) sp.set('q', q);
+  if (roleFilter) sp.set('role', roleFilter);
+  if (bannedFilter !== null) sp.set('banned', String(bannedFilter));
+  if (nextOffset > 0) sp.set('offset', String(nextOffset));
+  const qs = sp.toString();
+  return `/${locale}/admin/users${qs ? `?${qs}` : ''}`;
+}
+
+const prevHref = offset > 0 ? buildHref(Math.max(0, offset - limit)) : null;
+const nextHref = offset + limit < total ? buildHref(offset + limit) : null;
+---
+
+<Base title={labels.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <p class="back"><a href={`/${locale}/admin`}>{labels.backToAdmin}</a></p>
+      <header class="head">
+        <h1>{labels.title}</h1>
+        <p class="sub">{labels.subtitle}</p>
+      </header>
+
+      <form class="filters" method="get">
+        <input
+          type="search"
+          name="q"
+          value={q}
+          placeholder={labels.searchPlaceholder}
+          maxlength="120"
+        />
+        <select name="role">
+          <option value="">{labels.roleAll}</option>
+          {(['visitor', 'contributor', 'translator', 'reviewer', 'admin'] as Role[]).map((r) => (
+            <option value={r} selected={roleFilter === r}>{labels.roles[r]}</option>
+          ))}
+        </select>
+        <select name="banned">
+          <option value="">{labels.banAll}</option>
+          <option value="false" selected={bannedFilter === false}>{labels.banNone}</option>
+          <option value="true" selected={bannedFilter === true}>{labels.banOnly}</option>
+        </select>
+        <button type="submit" class="primary">{labels.filter}</button>
+        <a href={`/${locale}/admin/users`} class="reset">{labels.reset}</a>
+      </form>
+
+      <p class="count">{total} {labels.total}</p>
+
+      <article class="card">
+        <UserTable users={users} labels={labels.table} />
+      </article>
+
+      <nav class="pager" aria-label="pagination">
+        {prevHref ? <a href={prevHref} class="pgbtn">{labels.prev}</a> : <span class="pgbtn disabled">{labels.prev}</span>}
+        <span class="pginfo">{offset + 1}–{Math.min(offset + limit, total)} / {total}</span>
+        {nextHref ? <a href={nextHref} class="pgbtn">{labels.next}</a> : <span class="pgbtn disabled">{labels.next}</span>}
+      </nav>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .back { margin: 0 0 var(--space-4); }
+  .back a { color: var(--color-fg-muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .head { margin-block-end: var(--space-6); }
+  h1 { margin: 0; }
+  .sub { color: var(--color-fg-muted); margin: var(--space-2) 0 0; }
+  .filters {
+    display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center;
+    margin-block-end: var(--space-4);
+  }
+  .filters input, .filters select {
+    padding: 0.55rem 0.85rem;
+    border: 1.5px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-elevated);
+    color: var(--color-fg);
+    font: inherit;
+  }
+  .filters input:focus, .filters select:focus { border-color: var(--color-teal-500); outline: none; }
+  .filters input { min-inline-size: 22ch; }
+  button.primary {
+    padding: 0.55rem 1.1rem;
+    border-radius: var(--radius-full);
+    background: var(--color-cta);
+    color: var(--color-cta-fg);
+    border: none; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .reset { color: var(--color-fg-muted); text-decoration: none; padding: 0.55rem 0.5rem; }
+  .reset:hover { text-decoration: underline; }
+  .count { color: var(--color-fg-muted); margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; }
+  .card {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 0;
+    overflow: hidden;
+  }
+  .pager { display: flex; gap: var(--space-3); align-items: center; justify-content: center; margin-block-start: var(--space-6); }
+  .pgbtn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    color: var(--color-fg);
+    text-decoration: none;
+    background: var(--color-bg-elevated);
+  }
+  .pgbtn:hover { background: var(--color-bg, white); }
+  .pgbtn.disabled { opacity: 0.4; pointer-events: none; }
+  .pginfo { color: var(--color-fg-muted); font-variant-numeric: tabular-nums; }
+</style>

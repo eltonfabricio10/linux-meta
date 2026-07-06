@@ -1,0 +1,285 @@
+---
+import Base from '~/layouts/Base.astro';
+import EditOverlay from '~/components/EditOverlay.astro';
+import Container from '~/components/layout/Container.astro';
+import RuleDivider from '~/components/layout/RuleDivider.astro';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+
+type Bucket = {
+  id: string;
+  titleKey: keyof typeof dict.lists.buckets;
+  slugs: string[];
+  tone: 'forest' | 'terracotta' | 'slate' | 'amber';
+  maxAge: number;
+  requireRated: boolean;
+};
+const buckets: Bucket[] = [
+  { id: 'kids', titleKey: 'kids', tone: 'forest', maxAge: 9, requireRated: true,
+    slugs: ['gcompris', 'tuxpaint', 'kalzium', 'kgeography', 'ktouch', 'kanagram', 'klettres',
+            'kbruch', 'khangman', 'blinken', 'minuet', 'gbrainy', 'tuxmath'] },
+  { id: 'foss', titleKey: 'foss', tone: 'slate', maxAge: 99, requireRated: false,
+    slugs: ['gimp', 'krita', 'inkscape', 'libreoffice', 'thunderbird', 'audacity', 'kdenlive', 'blender', 'darktable'] },
+  { id: 'school', titleKey: 'school', tone: 'amber', maxAge: 14, requireRated: false,
+    slugs: ['libreoffice', 'geogebra', 'stellarium', 'celestia', 'kalzium', 'avogadrolibs', 'scribus', 'inkscape',
+            'gcompris', 'kgeography', 'marble', 'step', 'cantor'] },
+  { id: 'creative', titleKey: 'creative', tone: 'terracotta', maxAge: 99, requireRated: false,
+    slugs: ['blender', 'krita', 'gimp', 'inkscape', 'kdenlive', 'obs-studio', 'audacity', 'ardour', 'lmms'] },
+];
+
+const allSlugs = [...new Set(buckets.flatMap((b) => b.slugs))];
+const rows = await db.execute<{
+  id: number;
+  canonical_slug: string; name: string; slug: string;
+  age_min: number | null; dominant_source: string | null;
+  oars: Record<string, string> | null;
+  summary: string | null;
+}>(sql`
+  WITH pkg AS (
+    SELECT DISTINCT ON (COALESCE(canonical_slug, slug))
+      id, COALESCE(canonical_slug, slug) AS canonical_slug,
+      name, slug
+    FROM package
+    WHERE COALESCE(canonical_slug, slug) IN (${sql.join(allSlugs.map((s) => sql`${s}`), sql`, `)})
+    ORDER BY COALESCE(canonical_slug, slug),
+      CASE source WHEN 'flathub' THEN 4 WHEN 'manjaro' THEN 3 WHEN 'aur' THEN 2 WHEN 'debian' THEN 1 ELSE 0 END DESC,
+      popularity DESC
+  )
+  SELECT p.id, p.canonical_slug, p.name, p.slug,
+    rc.age_min, rc.dominant_source, rc.oars,
+    COALESCE(
+      (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = ${locale} LIMIT 1),
+      (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = 'en' LIMIT 1)
+    ) AS summary
+  FROM pkg p
+  LEFT JOIN rating_current rc ON rc.package_id = p.id
+`);
+
+const byCanonical = new Map(rows.map((r) => [r.canonical_slug, r]));
+
+type Item = (typeof rows)[number];
+const bucketItems: Array<{ bucket: typeof buckets[number]; items: Item[] }> = buckets.map((b) => {
+  const items = b.slugs
+    .map((s) => byCanonical.get(s))
+    .filter((p): p is Item => {
+      if (!p) return false;
+      if (p.age_min == null) return !b.requireRated;
+      return p.age_min <= b.maxAge;
+    });
+  return { bucket: b, items };
+}).filter((g) => g.items.length > 0);
+---
+
+<Base title={dict.lists.title} description={dict.lists.sub}>
+  <Container width="page">
+    <header class="head">
+      <p class="kicker">§ {dict.lists.kicker}</p>
+      <h1 class="title">{dict.lists.title}</h1>
+      <p class="lead">{dict.lists.sub}</p>
+    </header>
+
+    <div class="buckets">
+      {bucketItems.map(({ bucket: b, items }, idx) => (
+        <>
+          {idx > 0 && <RuleDivider tone={b.tone === 'forest' ? 'forest' : b.tone === 'terracotta' ? 'terracotta' : b.tone === 'slate' ? 'slate' : 'ink'} variant="wave" />}
+          <section class={`bucket tone-${b.tone}`}>
+            <header class="bhead">
+              <p class="bnum">{String((idx + 1) * 10).padStart(3, '0')}</p>
+              <h2>{dict.lists.buckets[b.titleKey].title}</h2>
+              <p class="bsub">{dict.lists.buckets[b.titleKey].sub}</p>
+            </header>
+            <ol class="items">
+              {items.map((p, i) => (
+                <li class={`item tone-${b.tone}`}>
+                  <EditOverlay
+                    href={localePath(locale, `/admin/packages/${p.id}`)}
+                    field={isPt ? 'pacote' : 'package'}
+                    block
+                  >
+                    <div class="item-inner">
+                      <span class="item-no">{String(i + 1).padStart(2, '0')}</span>
+                      <span class="item-thumb" aria-hidden="true">{p.name.charAt(0).toUpperCase()}</span>
+                      <div class="item-body">
+                        <a class="item-link" href={localePath(locale, `/p/${p.canonical_slug}`)}>
+                          <span class="item-name">{p.name}</span>
+                        </a>
+                        {p.summary && <p class="item-summary">{p.summary}</p>}
+                      </div>
+                      <span class={`item-age age-${p.age_min == null ? 'unknown' : p.age_min <= 6 ? 'a3' : p.age_min <= 11 ? 'a7' : p.age_min <= 15 ? 'a12' : p.age_min <= 17 ? 'a16' : 'a18'}`}>
+                        {p.age_min == null ? '—' : `${p.age_min}+`}
+                      </span>
+                    </div>
+                  </EditOverlay>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </>
+      ))}
+    </div>
+  </Container>
+</Base>
+
+<style>
+  .head {
+    max-inline-size: 60ch;
+    margin-block: var(--space-12) var(--space-16);
+    padding-block-end: var(--space-6);
+    border-block-end: 1px solid var(--color-rule);
+  }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--color-terracotta);
+    margin: 0 0 var(--space-3);
+  }
+  .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-style: normal;
+    font-size: clamp(2.2rem, 3vw + 1rem, 3.4rem);
+    line-height: 1.05;
+    margin: 0;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+  .lead {
+    margin: var(--space-4) 0 0;
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 1.05rem;
+    line-height: 1.55;
+    color: var(--color-ink-muted);
+    max-inline-size: 62ch;
+  }
+
+  .buckets { display: flex; flex-direction: column; gap: var(--space-12); }
+
+  .bhead { margin-block-end: var(--space-6); max-inline-size: 56ch; }
+  .bnum {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    margin: 0 0 var(--space-2);
+  }
+  .bhead h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-style: normal;
+    font-size: 1.6rem;
+    margin: 0;
+    color: var(--color-ink);
+  }
+  .bsub {
+    color: var(--color-ink-muted);
+    margin: var(--space-2) 0 0;
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 0.98rem;
+    line-height: 1.5;
+  }
+  .tone-forest h2 { color: var(--color-forest); }
+  .tone-terracotta h2 { color: var(--color-terracotta); }
+  .tone-slate h2 { color: var(--color-slate-blue); }
+  .tone-amber h2 { color: var(--age-12); }
+
+  .items {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column;
+  }
+  .item {
+    border-block-start: 1px solid var(--color-rule);
+  }
+  .item:first-child { border-block-start: none; }
+  .item-inner {
+    display: grid;
+    grid-template-columns: 2em 40px 1fr max-content;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+  }
+  .item-no {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--color-ink-muted);
+    align-self: start;
+    padding-block-start: 0.6em;
+  }
+  .item-thumb {
+    inline-size: 40px;
+    block-size: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-rule);
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--thumb-fg, var(--color-ink));
+    background: var(--thumb-bg, var(--color-paper));
+    align-self: start;
+  }
+  .item.tone-forest    { --thumb-bg: color-mix(in srgb, var(--color-forest) 14%, var(--color-paper)); --thumb-fg: var(--color-forest); }
+  .item.tone-amber     { --thumb-bg: color-mix(in srgb, var(--age-12) 22%, var(--color-paper));      --thumb-fg: color-mix(in srgb, var(--age-12) 80%, black); }
+  .item.tone-slate     { --thumb-bg: color-mix(in srgb, var(--color-slate-blue) 16%, var(--color-paper)); --thumb-fg: var(--color-slate-blue); }
+  .item.tone-terracotta{ --thumb-bg: color-mix(in srgb, var(--color-terracotta) 16%, var(--color-paper)); --thumb-fg: var(--color-terracotta); }
+  .item-body { min-inline-size: 0; }
+  .item-link { text-decoration: none; color: var(--color-ink); }
+  .item-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--color-ink);
+  }
+  .item-link:hover .item-name {
+    color: var(--color-forest);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+  .item-summary {
+    margin: var(--space-1) 0 0;
+    color: var(--color-ink-muted);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    max-inline-size: 60ch;
+  }
+  .item-age {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    line-height: 1.4;
+    align-self: start;
+  }
+  .item-age.age-a3       { color: var(--age-3); }
+  .item-age.age-a7       { color: color-mix(in srgb, var(--age-7) 80%, black); }
+  .item-age.age-a12      { color: color-mix(in srgb, var(--age-12) 80%, black); }
+  .item-age.age-a16      { color: var(--age-16); }
+  .item-age.age-a18      { color: var(--age-18); }
+  .item-age.age-unknown  { color: var(--color-ink-muted); }
+
+  @media (max-width: 720px) {
+    .item-inner {
+      grid-template-columns: 40px 1fr max-content;
+    }
+    .item-no { display: none; }
+  }
+</style>

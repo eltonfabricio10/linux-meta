@@ -1,0 +1,310 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, t, locales } from '~/i18n';
+import { getCurationStats } from '~/lib/stats';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+
+if (!Astro.locals.user) {
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) {
+  /* Non-admins are routed to their own workspace by the adminGate middleware;
+   * this is defense-in-depth if they reach here directly. */
+  return Astro.redirect(`/${locale}/auth/login`);
+}
+
+const cur = await getCurationStats();
+const fmt = new Intl.NumberFormat(isPt ? 'pt-BR' : 'en-US');
+
+const pendingApps = await db.execute<{ n: number }>(
+  sql`select count(*)::int as n from volunteer_application where status = 'pending'`,
+);
+const pendingSubs = await db.execute<{ n: number }>(
+  sql`select count(*)::int as n from package_submission where status = 'pending'`,
+);
+const appsCount = (pendingApps as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+const subsCount = (pendingSubs as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+
+const totalTr = cur.backlog.draft + cur.backlog.reviewed + cur.backlog.official;
+const pct = (n: number) => (totalTr > 0 ? Math.round((n / totalTr) * 100) : 0);
+const burnMax = Math.max(1, ...cur.burnDown.map((d) => d.reviewed));
+const burnCleared = cur.burnDown.reduce((s, d) => s + d.reviewed, 0);
+const burnRate = cur.burnDown.length > 0 ? burnCleared / cur.burnDown.length : 0;
+const daysToClear = burnRate > 0 ? Math.ceil(cur.backlog.draft / burnRate) : null;
+
+function workerTone(status: string): string {
+  if (status === 'error') return 'err';
+  if (status === 'running') return 'run';
+  if (status === 'success') return 'ok';
+  return 'idle';
+}
+
+const navLabels = isPt
+  ? { users: 'Usuários', audit: 'Log de auditoria', workers: 'Workers', packages: 'Pacotes', translations: 'Traduções', reviewers: 'Revisores', ratings: 'Avaliações', disputes: 'Disputas', applications: 'Candidaturas', submissions: 'Submissões', section: 'Administração', quality: 'Qualidade' }
+  : { users: 'Users', audit: 'Audit log', workers: 'Workers', packages: 'Packages', translations: 'Translations', reviewers: 'Reviewers', ratings: 'Ratings', disputes: 'Disputes', applications: 'Applications', submissions: 'Submissions', section: 'Administration', quality: 'Quality' };
+const L = isPt ? {
+  draftsAwaiting: 'rascunhos aguardando revisão',
+  startReviewing: 'Começar a revisar',
+  clearEta: daysToClear != null ? `no ritmo atual, zera em ~${daysToClear} dias` : 'sem ritmo de revisão nos últimos 14 dias',
+  backlog: 'Fila de revisão', cleared14: 'revisados (14 dias)',
+  coverage: 'Cobertura por idioma', worker: 'Saúde dos workers',
+  running: 'rodando', runs24: 'execuções 24h', errors24: 'erros 24h',
+  qualityWarn: 'Avisos de qualidade', disputesH: 'Disputas',
+  reviewersH: 'Atividade de revisores (7 dias)', open: 'abertas',
+  aiRatings: 'classificações ainda da IA', missingProfile: 'sem perfil completo', noHuman: 'sem revisão humana',
+  none: 'Sem dados ainda.', locale: 'Idioma', draft: 'rascunho', reviewed: 'revisado', official: 'oficial', last: 'última',
+} : {
+  draftsAwaiting: 'drafts awaiting review',
+  startReviewing: 'Start reviewing',
+  clearEta: daysToClear != null ? `at current rate, clears in ~${daysToClear} days` : 'no review activity in the last 14 days',
+  backlog: 'Review backlog', cleared14: 'reviewed (14 days)',
+  coverage: 'Coverage by locale', worker: 'Worker health',
+  running: 'running', runs24: 'runs 24h', errors24: 'errors 24h',
+  qualityWarn: 'Quality warnings', disputesH: 'Disputes',
+  reviewersH: 'Reviewer activity (7 days)', open: 'open',
+  aiRatings: 'ratings still AI', missingProfile: 'missing full profile', noHuman: 'no human review',
+  none: 'No data yet.', locale: 'Locale', draft: 'draft', reviewed: 'reviewed', official: 'official', last: 'last',
+};
+---
+
+<Base title={dict.admin.adminTitle}>
+  <section class="wrap">
+    <div class="container-page">
+      <h1>{dict.admin.adminTitle}</h1>
+
+      <nav class="adminnav" aria-label={navLabels.section}>
+        <a href={`/${locale}/admin/users`}>{navLabels.users}</a>
+        <a href={`/${locale}/admin/audit`}>{navLabels.audit}</a>
+        <a href={`/${locale}/admin/workers`}>{navLabels.workers}</a>
+        <a href={`/${locale}/admin/packages`}>{navLabels.packages}</a>
+        <a href={`/${locale}/admin/translations`}>{navLabels.translations}</a>
+        <a href={`/${locale}/admin/reviewers`}>{navLabels.reviewers}</a>
+        <a href={`/${locale}/admin/ratings`}>{navLabels.ratings}</a>
+        <a href={`/${locale}/admin/disputes`}>{navLabels.disputes}</a>
+        <a href={`/${locale}/admin/quality`}>{navLabels.quality}</a>
+        <a href={`/${locale}/admin/aplicacoes`}>{navLabels.applications}{appsCount > 0 && <span class="pill">{appsCount}</span>}</a>
+        <a href={`/${locale}/admin/submissoes`}>{navLabels.submissions}{subsCount > 0 && <span class="pill">{subsCount}</span>}</a>
+      </nav>
+
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="hero-n">{fmt.format(cur.backlog.draft)}</p>
+          <p class="hero-l">{L.draftsAwaiting}</p>
+          <p class="hero-eta">{L.clearEta}</p>
+        </div>
+        <a class="hero-cta" href={`/${locale}/revisar/queue`}>{L.startReviewing} →</a>
+      </div>
+
+      <div class="grid">
+        <article class="card span2">
+          <h2>{L.backlog}</h2>
+          <div class="bar">
+            <span class="seg seg-draft" style={`width:${pct(cur.backlog.draft)}%`} title={`${L.draft}: ${cur.backlog.draft}`}></span>
+            <span class="seg seg-rev" style={`width:${pct(cur.backlog.reviewed)}%`} title={`${L.reviewed}: ${cur.backlog.reviewed}`}></span>
+            <span class="seg seg-off" style={`width:${pct(cur.backlog.official)}%`} title={`${L.official}: ${cur.backlog.official}`}></span>
+          </div>
+          <ul class="legend">
+            <li><i class="d-draft"></i>{L.draft} <strong>{fmt.format(cur.backlog.draft)}</strong> ({pct(cur.backlog.draft)}%)</li>
+            <li><i class="d-rev"></i>{L.reviewed} <strong>{fmt.format(cur.backlog.reviewed)}</strong> ({pct(cur.backlog.reviewed)}%)</li>
+            <li><i class="d-off"></i>{L.official} <strong>{fmt.format(cur.backlog.official)}</strong> ({pct(cur.backlog.official)}%)</li>
+          </ul>
+          <div class="burn">
+            <p class="burn-cap">{fmt.format(burnCleared)} {L.cleared14}</p>
+            <div class="burn-bars">
+              {cur.burnDown.map((d) => (
+                <span class="burn-bar" style={`height:${Math.max(4, Math.round((d.reviewed / burnMax) * 100))}%`} title={`${d.day}: ${d.reviewed}`}></span>
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>{L.worker}</h2>
+          <p class="kpis">
+            <span class={cur.workers.runningNow > 0 ? 'kpi kpi-run' : 'kpi'}>{cur.workers.runningNow} <small>{L.running}</small></span>
+            <span class="kpi">{cur.workers.runs24h} <small>{L.runs24}</small></span>
+            <span class={cur.workers.errors24h > 0 ? 'kpi kpi-err' : 'kpi'}>{cur.workers.errors24h} <small>{L.errors24}</small></span>
+          </p>
+          <ul class="wlist">
+            {cur.workers.perWorker.slice(0, 6).map((w) => (
+              <li>
+                <span class={`dot dot-${workerTone(w.status)}`} title={w.status}></span>
+                <a href={`/${locale}/admin/workers/${w.worker}`}>{w.worker}</a>
+                <span class="wnum">{fmt.format(w.itemsProcessed)}{w.errorsCount > 0 && <em class="werr"> · {w.errorsCount} err</em>}</span>
+              </li>
+            ))}
+            {cur.workers.perWorker.length === 0 && <li class="empty">{L.none}</li>}
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>{L.qualityWarn}</h2>
+          <ul class="qlist">
+            <li><a href={`/${locale}/admin/quality?signal=no-human-tr`}><strong>{fmt.format(cur.quality.noHumanTranslation)}</strong> {L.noHuman}</a></li>
+            <li><a href={`/${locale}/admin/quality?signal=ai-rating`}><strong>{fmt.format(cur.quality.aiRatings)}</strong> {L.aiRatings}</a></li>
+            <li><a href={`/${locale}/admin/quality?signal=missing-profile`}><strong>{fmt.format(cur.quality.missingProfile)}</strong> {L.missingProfile}</a></li>
+          </ul>
+        </article>
+
+        <article class="card span2">
+          <h2>{L.coverage}</h2>
+          <table>
+            <thead><tr><th>{L.locale}</th><th class="n">{L.draft}</th><th class="n">{L.reviewed}</th><th class="n">{L.official}</th></tr></thead>
+            <tbody>
+              {cur.coverageByLocale.map((r) => (
+                <tr>
+                  <td><a href={`/${locale}/admin/translations?locale=${r.locale}&status=draft`}>{r.locale}</a></td>
+                  <td class="n warnum">{fmt.format(r.draft)}</td>
+                  <td class="n">{fmt.format(r.reviewed)}</td>
+                  <td class="n">{fmt.format(r.official)}</td>
+                </tr>
+              ))}
+              {cur.coverageByLocale.length === 0 && <tr><td colspan="4" class="empty">{L.none}</td></tr>}
+            </tbody>
+          </table>
+        </article>
+
+        <article class="card">
+          <h2>{navLabels.disputes}</h2>
+          <p class="big"><strong>{fmt.format(cur.disputes.open)}</strong> {L.open}</p>
+          <ul class="hotspots">
+            {cur.disputes.hotspots.map((h) => (
+              <li><a href={`/${locale}/admin/disputes`}>{h.name}</a><span class="wnum">{h.n}</span></li>
+            ))}
+            {cur.disputes.hotspots.length === 0 && <li class="empty">{L.none}</li>}
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>{L.reviewersH}</h2>
+          <ul class="hotspots">
+            {cur.reviewers.map((r) => (
+              <li><span class="ractor">{r.actor.slice(0, 12)}</span><span class="wnum">{r.n}</span></li>
+            ))}
+            {cur.reviewers.length === 0 && <li class="empty">{L.none}</li>}
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-8); }
+  h2 { font-size: 1rem; margin: 0 0 var(--space-4); color: var(--color-ink); }
+
+  .adminnav { display: flex; gap: var(--space-3); flex-wrap: wrap; margin: 0 0 var(--space-8); }
+  .adminnav a {
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-bg-elevated);
+    color: var(--color-ink);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .adminnav a:hover { background: var(--color-bg); }
+  .pill { display: inline-block; margin-inline-start: var(--space-2); padding: 0 6px; min-width: 18px; text-align: center; background: var(--color-terracotta); color: white; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+
+  /* Hero "start reviewing" band */
+  .hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-6);
+    flex-wrap: wrap;
+    padding: var(--space-6) var(--space-8);
+    margin-block-end: var(--space-6);
+    border-radius: var(--radius-xl);
+    background: var(--surface-hero);
+    background-image: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--age-12) 30%, transparent), transparent 55%);
+    color: var(--surface-hero-fg);
+  }
+  .hero-n { font-family: var(--font-display); font-weight: 800; font-size: clamp(2rem, 4vw, 3rem); margin: 0; line-height: 1; font-feature-settings: "lnum","tnum"; }
+  .hero-l { margin: var(--space-2) 0 0; font-size: 1.05rem; color: var(--surface-hero-fg); }
+  .hero-eta { margin: var(--space-1) 0 0; font-family: var(--font-mono); font-size: 0.8rem; color: var(--surface-hero-muted); }
+  .hero-cta {
+    padding: 0.7rem 1.4rem;
+    background: var(--color-cta);
+    color: var(--color-cta-fg);
+    border-radius: var(--radius-full);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+  .hero-cta:hover { background: var(--color-terracotta-hover); }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-5); }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+  .span2 { grid-column: span 2; }
+  @media (max-width: 680px) { .span2 { grid-column: span 1; } }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-6); }
+
+  .bar { display: flex; height: 14px; border-radius: var(--radius-full); overflow: hidden; background: var(--color-rule); margin-block-end: var(--space-4); }
+  .seg-draft { background: var(--age-12); }
+  .seg-rev { background: var(--color-slate-blue); }
+  .seg-off { background: var(--age-3); }
+  .legend { list-style: none; padding: 0; margin: 0 0 var(--space-5); display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); font-size: 0.85rem; color: var(--color-ink-muted); }
+  .legend i { display: inline-block; inline-size: 10px; block-size: 10px; border-radius: 2px; margin-inline-end: 6px; }
+  .legend strong { color: var(--color-ink); }
+  .d-draft { background: var(--age-12); }
+  .d-rev { background: var(--color-slate-blue); }
+  .d-off { background: var(--age-3); }
+
+  .burn-cap { font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-ink-muted); margin: 0 0 var(--space-2); }
+  .burn-bars { display: flex; align-items: flex-end; gap: 3px; height: 56px; }
+  .burn-bar { flex: 1; background: color-mix(in srgb, var(--age-3) 60%, var(--color-rule)); border-radius: 2px 2px 0 0; min-height: 4px; }
+
+  .kpis { display: flex; gap: var(--space-4); margin: 0 0 var(--space-4); }
+  .kpi { font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; color: var(--color-ink); display: flex; flex-direction: column; }
+  .kpi small { font-family: var(--font-sans); font-weight: 500; font-size: 0.7rem; color: var(--color-ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .kpi-run { color: var(--color-slate-blue); }
+  .kpi-err { color: var(--color-terracotta); }
+
+  .wlist, .qlist, .hotspots { list-style: none; padding: 0; margin: 0; }
+  .wlist li, .hotspots li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; font-size: 0.9rem; }
+  .wlist a, .hotspots a { color: var(--color-forest); text-decoration: none; }
+  .wlist a:hover, .hotspots a:hover { text-decoration: underline; }
+  .wnum { margin-inline-start: auto; font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-ink-muted); }
+  .werr { color: var(--color-terracotta); font-style: normal; }
+  .ractor { font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-ink); }
+  .dot { inline-size: 9px; block-size: 9px; border-radius: 999px; flex: 0 0 auto; }
+  .dot-ok { background: var(--age-3); }
+  .dot-run { background: var(--color-slate-blue); }
+  .dot-err { background: var(--color-terracotta); }
+  .dot-idle { background: var(--color-rule); }
+
+  .qlist li { padding: var(--space-2) 0; border-block-end: 1px solid var(--color-rule); }
+  .qlist li:last-child { border-block-end: none; }
+  .qlist a { color: var(--color-ink); text-decoration: none; display: flex; gap: var(--space-2); align-items: baseline; }
+  .qlist a:hover strong { color: var(--color-forest); }
+  .qlist strong { font-family: var(--font-display); font-size: 1.1rem; }
+
+  .big { margin: 0 0 var(--space-3); }
+  .big strong { font-family: var(--font-display); font-size: 1.6rem; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); }
+  th { font-size: 0.72rem; color: var(--color-ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.82rem; }
+  td a { color: var(--color-forest); text-decoration: none; }
+  .warnum { color: var(--color-terracotta); }
+  .empty { color: var(--color-ink-muted); margin: 0; }
+</style>

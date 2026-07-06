@@ -1,0 +1,88 @@
+---
+/* Placeholder hero — static ink-line drawing of a card-catalog drawer.
+ * Replaced when commissioned illustration arrives (see plan, Phase R6).
+ * Style: thin stroke, no fill, paper background, restrained. */
+---
+
+<div class="hero-illu" aria-hidden="true">
+  <svg viewBox="0 0 520 360" xmlns="http://www.w3.org/2000/svg" role="img" preserveAspectRatio="xMidYMid meet">
+    <!-- subtle paper tone backdrop -->
+    <rect x="0" y="0" width="520" height="360" fill="none" />
+
+    <!-- card-catalog drawer, open, with a stack of fichas -->
+    <g stroke="var(--color-ink)" stroke-width="1.25" fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <!-- drawer body -->
+      <path d="M70 110 L70 280 L450 280 L450 110 Z" />
+      <!-- drawer lip -->
+      <path d="M70 110 L60 100 L460 100 L450 110" />
+      <!-- drawer pull -->
+      <rect x="240" y="295" width="40" height="14" rx="2" />
+      <!-- inside back wall -->
+      <line x1="78" y1="118" x2="442" y2="118" stroke-dasharray="2 4" stroke-width="0.8" />
+    </g>
+
+    <!-- stack of fichas, slightly fanned -->
+    <g>
+      <!-- back ficha -->
+      <g transform="translate(110 130) rotate(-2)">
+        <rect x="0" y="0" width="260" height="120" fill="var(--color-paper-elev)" stroke="var(--color-rule)" stroke-width="1" rx="2" />
+        <line x1="14" y1="22" x2="240" y2="22" stroke="var(--color-rule)" stroke-width="0.6" stroke-dasharray="1 3" />
+        <line x1="14" y1="46" x2="200" y2="46" stroke="var(--color-rule)" stroke-width="0.6" stroke-dasharray="1 3" />
+        <line x1="14" y1="70" x2="220" y2="70" stroke="var(--color-rule)" stroke-width="0.6" stroke-dasharray="1 3" />
+      </g>
+      <!-- middle ficha -->
+      <g transform="translate(135 145) rotate(1)">
+        <rect x="0" y="0" width="260" height="120" fill="var(--color-paper-elev)" stroke="var(--color-rule)" stroke-width="1" rx="2" />
+      </g>
+      <!-- front ficha, detailed -->
+      <g transform="translate(155 158)">
+        <rect x="0" y="0" width="260" height="120" fill="var(--color-paper-elev)" stroke="var(--color-ink)" stroke-width="1.2" rx="2" />
+        <!-- header band -->
+        <rect x="0" y="0" width="260" height="22" fill="none" stroke="var(--color-ink)" stroke-width="1.2" />
+        <text x="14" y="15" font-family="var(--font-mono)" font-size="9" fill="var(--color-ink-muted)" letter-spacing="1.4">FICHA Nº 142</text>
+        <text x="220" y="15" font-family="var(--font-mono)" font-size="9" fill="var(--color-terracotta)" letter-spacing="1.4">12+</text>
+        <!-- body lines -->
+        <text x="14" y="44" font-family="var(--font-mono)" font-size="8" fill="var(--color-ink-muted)" letter-spacing="0.6">TÍTULO</text>
+        <text x="14" y="58" font-family="var(--font-display)" font-size="14" fill="var(--color-ink)" font-style="italic">Firefox Web Browser</text>
+        <line x1="14" y1="68" x2="246" y2="68" stroke="var(--color-rule)" stroke-width="0.6" stroke-dasharray="1 2" />
+        <text x="14" y="82" font-family="var(--font-mono)" font-size="8" fill="var(--color-ink-muted)" letter-spacing="0.6">FONTE</text>
+        <text x="60" y="82" font-family="var(--font-mono)" font-size="9" fill="var(--color-ink)">flathub · importado</text>
+        <text x="14" y="98" font-family="var(--font-mono)" font-size="8" fill="var(--color-ink-muted)" letter-spacing="0.6">DATA</text>
+        <text x="60" y="98" font-family="var(--font-mono)" font-size="9" fill="var(--color-ink)">2026-05-20</text>
+        <!-- bottom tag -->
+        <rect x="0" y="110" width="260" height="10" fill="var(--color-paper)" />
+        <text x="14" y="118" font-family="var(--font-mono)" font-size="7" fill="var(--color-ink-muted)" letter-spacing="1">717 IMPORTADOS · 13 IA · 0 HUMANOS</text>
+      </g>
+    </g>
+
+    <!-- small annotation arrow + label, right side -->
+    <g stroke="var(--color-terracotta)" stroke-width="1" fill="none" stroke-linecap="round">
+      <path d="M430 175 Q 460 165 472 145" />
+      <path d="M468 152 L472 145 L478 150" />
+    </g>
+    <text x="438" y="135" font-family="var(--font-mono)" font-size="9" fill="var(--color-terracotta)" letter-spacing="0.4">cada dado</text>
+    <text x="438" y="148" font-family="var(--font-mono)" font-size="9" fill="var(--color-terracotta)" letter-spacing="0.4">com proveniência</text>
+  </svg>
+</div>
+
+<style>
+  .hero-illu {
+    inline-size: 100%;
+    max-inline-size: 520px;
+    margin-inline: auto;
+    aspect-ratio: 13 / 9;
+  }
+  .hero-illu svg {
+    inline-size: 100%;
+    block-size: 100%;
+    display: block;
+  }
+  /* Subtle entry fade — respects reduced motion globally. */
+  .hero-illu {
+    animation: fade-in var(--duration-slow) var(--ease-out-quad) both;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>

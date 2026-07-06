@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+  - workers/*
+  - e2e
+allowBuilds:
+  esbuild: false
+  sharp: false
+onlyBuiltDependencies:
+  - esbuild
+  - sharp

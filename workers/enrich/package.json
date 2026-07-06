@@ -1,0 +1,19 @@
+{
+  "name": "@linux-meta/enrich",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "permissions": "node --experimental-strip-types --no-warnings src/permissions.ts",
+    "cve": "node --experimental-strip-types --no-warnings src/cve.ts",
+    "health": "node --experimental-strip-types --no-warnings src/health.ts"
+  },
+  "dependencies": {
+    "@linux-meta/db": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}

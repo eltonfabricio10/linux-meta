@@ -1,0 +1,32 @@
+{
+  "name": "linux-meta",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.2.2",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @linux-meta/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @linux-meta/e2e test",
+    "test:install": "pnpm --filter @linux-meta/e2e install:browsers",
+    "review": "node tools/review-data.mjs",
+    "review:workbench": "node tools/package-review-workbench.mjs",
+    "metadata:extract": "node tools/extract-package-source-metadata.mjs",
+    "metadata:sync:prepare": "node tools/prepare-official-metadata-sync.mjs",
+    "setup": "bash scripts/dev-setup.sh",
+    "db:up": "docker compose -f infra/docker/compose.yml up -d postgres",
+    "db:down": "docker compose -f infra/docker/compose.yml down",
+    "db:push": "pnpm --filter @linux-meta/db push",
+    "db:studio": "pnpm --filter @linux-meta/db studio",
+    "db:export": "bash scripts/db-export.sh",
+    "db:import": "bash scripts/db-import.sh"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.7"
+  }
+}

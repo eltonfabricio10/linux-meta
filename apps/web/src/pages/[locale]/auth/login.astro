@@ -1,0 +1,30 @@
+---
+import Base from '~/layouts/Base.astro';
+import AuthForm from '~/components/auth/AuthForm';
+import { getLocaleFromUrl, t, locales } from '~/i18n';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+
+if (Astro.locals.user) {
+  return Astro.redirect(`/${locale}/`);
+}
+---
+
+<Base title={dict.auth.loginTitle}>
+  <section class="wrap">
+    <div class="container-prose">
+      <h1>{dict.auth.loginTitle}</h1>
+      <AuthForm client:load mode="login" locale={locale} labels={dict.auth} />
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-16); }
+  h1 { margin: 0 0 var(--space-8); }
+</style>

@@ -1,0 +1,14 @@
+/* TEAM */
+
+Project: linux-meta
+Version: 0.1
+Contributors: To be listed once a CONTRIBUTOR consent process is in place.
+
+/* TECHNOLOGY */
+
+Stack: Astro (SSR, Node adapter) + Preact + Tailwind CSS + Drizzle ORM on PostgreSQL.
+
+/* SITE */
+
+Last update: 2026-05-24
+Standards: HTML5, CSS, TypeScript

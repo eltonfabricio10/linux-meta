@@ -1,0 +1,133 @@
+---
+import { getLocaleFromUrl, t, localePath } from '~/i18n';
+
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const year = new Date().getUTCFullYear();
+const buildDate = new Date().toISOString().slice(0, 10);
+const colofão = locale === 'pt'
+  ? 'Composto em Newsreader (Production Type) e IBM Plex (IBM Corp.), ambas sob licença SIL Open Font 1.1. Código sob AGPL-3.0; dataset sob CC0.'
+  : 'Set in Newsreader (Production Type) and IBM Plex (IBM Corp.), both under SIL Open Font 1.1. Code AGPL-3.0; dataset CC0.';
+const missionShort = locale === 'pt'
+  ? 'Um catálogo aberto de metadados Linux. Trabalho em andamento, em público.'
+  : 'An open catalog of Linux metadata. Work in progress, in public.';
+---
+
+<footer class="site-footer">
+  <div class="container-page inner">
+    <section class="lede">
+      <p class="quote">“{missionShort}”</p>
+    </section>
+
+    <nav class="nav" aria-label="Footer">
+      <h2>{locale === 'pt' ? 'Páginas' : 'Pages'}</h2>
+      <a href={localePath(locale, '/about')}>{dict.nav.about}</a>
+      <a href={localePath(locale, '/transparency')}>{dict.nav.transparency}</a>
+      <a href={localePath(locale, '/governanca')}>{locale === 'pt' ? 'Governança' : 'Governance'}</a>
+      <a href={localePath(locale, '/sponsor')}>{dict.nav.sponsor}</a>
+      <a href={localePath(locale, '/conduct')}>{locale === 'pt' ? 'Conduta' : 'Conduct'}</a>
+      <a href={localePath(locale, '/status')}>Status</a>
+    </nav>
+
+    <section class="colophon">
+      <h2>{locale === 'pt' ? 'Colofão' : 'Colophon'}</h2>
+      <p>{colofão}</p>
+    </section>
+
+    <section class="meta">
+      <span class="badge">v0.1 · early access</span>
+      <span class="build">© {year} · build {buildDate}</span>
+    </section>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    margin-block-start: var(--space-24);
+    padding-block: var(--space-12) var(--space-8);
+    background: var(--color-paper-elev);
+    color: var(--color-ink);
+    border-block-start: 1px solid var(--color-rule);
+  }
+  .inner {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1.6fr;
+    grid-template-areas:
+      "lede nav colophon"
+      "meta meta meta";
+    gap: var(--space-8);
+    align-items: start;
+  }
+  .lede { grid-area: lede; }
+  .nav { grid-area: nav; display: flex; flex-direction: column; gap: var(--space-1); }
+  .colophon { grid-area: colophon; }
+  .meta {
+    grid-area: meta;
+    border-block-start: 1px solid var(--color-rule);
+    padding-block-start: var(--space-4);
+    margin-block-start: var(--space-4);
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .quote {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 300;
+    font-size: var(--text-xl);
+    line-height: 1.35;
+    color: var(--color-ink);
+    margin: 0;
+    max-inline-size: 28ch;
+    font-variation-settings: "opsz" 36;
+  }
+  .site-footer h2 {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-ink-muted);
+    font-weight: 500;
+    margin: 0 0 var(--space-3);
+    border: none;
+  }
+  .nav a {
+    color: var(--color-ink);
+    text-decoration: none;
+    font-size: var(--text-base);
+    padding: 2px 0;
+    border-block-end: 1px solid transparent;
+    align-self: flex-start;
+  }
+  .nav a:hover { border-block-end-color: var(--color-forest); color: var(--color-forest); }
+  .colophon p {
+    font-size: var(--text-sm);
+    color: var(--color-ink-muted);
+    line-height: 1.55;
+    max-inline-size: 40ch;
+    margin: 0;
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-terracotta);
+    border: 1px solid var(--color-terracotta);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+  }
+  .build {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-ink-muted);
+    letter-spacing: 0.03em;
+  }
+  @media (max-width: 760px) {
+    .inner {
+      grid-template-columns: 1fr;
+      grid-template-areas: "lede" "nav" "colophon" "meta";
+    }
+  }
+</style>

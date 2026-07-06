@@ -1,0 +1,211 @@
+---
+import Base from '~/layouts/Base.astro';
+import Container from '~/components/layout/Container.astro';
+import { getLocaleFromUrl, locales, localePath } from '~/i18n';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const isPt = locale === 'pt';
+---
+
+<Base
+  title={isPt ? 'linux-meta · por que isto importa' : 'linux-meta · why this matters'}
+  description={isPt
+    ? 'O contexto regulatório que torna metadados claros de idade, risco e origem uma base melhor para distribuir software Linux.'
+    : 'The regulatory context that makes clear age, risk and origin metadata a stronger base for distributing Linux software.'}
+>
+  <Container width="page">
+    <header class="head">
+      <p class="kicker">{isPt ? '§ por que agora' : '§ why now'}</p>
+      <h1 class="title">{isPt
+        ? 'A pressão regulatória não mira só conteúdo: mira responsabilidade.'
+        : 'Regulatory pressure is not only about content: it is about accountability.'}</h1>
+      <p class="lead">{isPt
+        ? 'As regras abaixo têm escopos diferentes — plataformas online, produtos digitais, conteúdo adulto, redes sociais. O ponto comum é simples: quem distribui tecnologia precisa explicar riscos, idade e origem com mais clareza. linux-meta não é aconselhamento jurídico; é infraestrutura aberta para reduzir improviso.'
+        : 'The rules below have different scopes — online platforms, digital products, adult content, social media. The shared direction is simple: technology distributors need clearer explanations of risk, age and origin. linux-meta is not legal advice; it is open infrastructure that reduces guesswork.'}</p>
+    </header>
+
+    <ol class="laws-list">
+      <li class="law">
+        <span class="law-flag" aria-hidden="true">🇪🇺</span>
+        <div class="law-body">
+          <h2>{isPt ? 'União Europeia · Digital Services Act' : 'European Union · Digital Services Act'}</h2>
+          <p>{isPt
+            ? 'Plataformas online acessíveis a menores devem adotar medidas proporcionais de privacidade, segurança e proteção. Metadados claros ajudam a demonstrar cuidado e rastreabilidade.'
+            : 'Online platforms accessible to minors must adopt proportionate privacy, safety and protection measures. Clear metadata helps demonstrate care and traceability.'}</p>
+          <a class="law-source" href="https://digital-strategy.ec.europa.eu/en/policies/dsa-enforcement" rel="noopener external">{isPt ? 'Fonte oficial' : 'Official source'}</a>
+        </div>
+        <span class="law-fine"><span class="law-fine-tag">{isPt ? 'Multa' : 'Fine'}</span>{isPt ? 'até 6% do faturamento global' : 'up to 6% of global revenue'}</span>
+      </li>
+      <li class="law">
+        <span class="law-flag" aria-hidden="true">🇬🇧</span>
+        <div class="law-body">
+          <h2>{isPt ? 'Reino Unido · Online Safety Act' : 'United Kingdom · Online Safety Act'}</h2>
+          <p>{isPt
+            ? 'A Ofcom exige mecanismos de idade altamente eficazes em serviços cobertos, especialmente para impedir acesso infantil a pornografia online.'
+            : 'Ofcom requires highly effective age checks for covered services, especially to prevent children’s access to online pornography.'}</p>
+          <a class="law-source" href="https://www.ofcom.org.uk/online-safety/protecting-children/age-checks-to-protect-children-online" rel="noopener external">{isPt ? 'Fonte oficial' : 'Official source'}</a>
+        </div>
+        <span class="law-fine"><span class="law-fine-tag">{isPt ? 'Multa' : 'Fine'}</span>{isPt ? '£ 18 milhões ou 10% da receita' : '£18 million or 10% of revenue'}</span>
+      </li>
+      <li class="law">
+        <span class="law-flag" aria-hidden="true">🇧🇷</span>
+        <div class="law-body">
+          <h2>{isPt ? 'Brasil · ECA Digital (Lei 15.211/2025)' : 'Brazil · ECA Digital (Law 15.211/2025)'}</h2>
+          <p>{isPt
+            ? 'A ANPD orienta fornecedores de tecnologia direcionada a crianças e adolescentes, ou de acesso provável por esse público, sobre mecanismos confiáveis de aferição de idade.'
+            : 'Brazil’s data authority guides technology providers directed at children and teenagers, or likely accessed by them, on reliable age-assurance mechanisms.'}</p>
+          <a class="law-source" href="https://www.gov.br/anpd/pt-br/assuntos/eca-digital" rel="noopener external">{isPt ? 'Fonte oficial' : 'Official source'}</a>
+        </div>
+        <span class="law-fine"><span class="law-fine-tag">{isPt ? 'Sanção' : 'Sanction'}</span>{isPt ? 'administrativa via ANPD/Senacon' : 'admin sanctions via ANPD/Senacon'}</span>
+      </li>
+      <li class="law">
+        <span class="law-flag" aria-hidden="true">🇦🇺</span>
+        <div class="law-body">
+          <h2>{isPt ? 'Austrália · idade mínima nas plataformas' : 'Australia · platform minimum age'}</h2>
+          <p>{isPt
+            ? 'A regra australiana se concentra em redes sociais cobertas: as plataformas devem tomar medidas razoáveis para impedir contas de menores de 16 anos.'
+            : 'Australia’s rule focuses on covered social media services: platforms must take reasonable steps to prevent accounts for under-16s.'}</p>
+          <a class="law-source" href="https://www.esafety.gov.au/parents/social-media-age-restrictions" rel="noopener external">{isPt ? 'Fonte oficial' : 'Official source'}</a>
+        </div>
+        <span class="law-fine"><span class="law-fine-tag">{isPt ? 'Multa' : 'Fine'}</span>{isPt ? 'até A$ 49,5 milhões' : 'up to A$49.5 million'}</span>
+      </li>
+    </ol>
+
+    <p class="laws-foot">{isPt
+      ? 'Software livre não deve esperar a crise chegar para organizar seus metadados. Quando o dado é aberto, verificável e reaproveitável, cada distribuição ganha uma base melhor sem empurrar esse trabalho para mantenedores isolados.'
+      : 'Free software should not wait for a crisis to organise its metadata. When the data is open, verifiable and reusable, each distribution gets a stronger base without pushing the work onto isolated maintainers.'}</p>
+
+    <p class="back"><a href={localePath(locale, '/')}>← {isPt ? 'Voltar para a página inicial' : 'Back to home'}</a></p>
+  </Container>
+</Base>
+
+<style>
+  .head {
+    max-inline-size: 72ch;
+    margin-block: var(--space-12) var(--space-12);
+    padding-block-end: var(--space-6);
+    border-block-end: 1px solid var(--color-rule);
+  }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--color-terracotta);
+    margin: 0 0 var(--space-3);
+  }
+  .title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(2rem, 3vw + 1rem, 3rem);
+    line-height: 1.1;
+    margin: 0;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+  .lead {
+    margin: var(--space-5) 0 0;
+    font-size: 1.08rem;
+    line-height: 1.6;
+    color: var(--color-ink);
+    max-inline-size: 72ch;
+  }
+
+  .laws-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-5);
+  }
+  @media (max-width: 900px) { .laws-list { grid-template-columns: 1fr; } }
+  @media (max-width: 520px) {
+    .law { grid-template-columns: 38px 1fr; padding: var(--space-4); }
+    .law-flag { font-size: 1.6rem; }
+    .law-fine { grid-column: 1 / -1; border-radius: var(--radius-md); }
+  }
+  .law {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    grid-template-rows: auto auto;
+    gap: var(--space-1) var(--space-4);
+    padding: var(--space-5);
+    background: var(--color-paper-elev);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
+  }
+  .law-flag { grid-row: 1 / span 2; font-size: 2rem; line-height: 1; align-self: start; }
+  .law-body h2 { margin: 0 0 6px; font-size: 1.05rem; font-weight: 600; letter-spacing: 0; }
+  .law-body p {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    max-inline-size: 52ch;
+  }
+  .law-source {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 32px;
+    margin-block-start: var(--space-2);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .law-fine {
+    grid-column: 2;
+    margin-block-start: var(--space-3);
+    align-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    inline-size: fit-content;
+    max-inline-size: 100%;
+    padding: 4px 12px 4px 4px;
+    background: color-mix(in srgb, var(--color-terracotta) 14%, transparent);
+    color: var(--color-terracotta-hover);
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.78rem;
+  }
+  .law-fine-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: var(--color-terracotta);
+    color: #fff;
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1;
+  }
+  .law-fine-tag::before { content: "⚠"; font-size: 0.85rem; line-height: 1; }
+  [data-theme="dark"] .law-fine {
+    background: color-mix(in srgb, var(--color-terracotta) 22%, transparent);
+    color: var(--color-terracotta);
+  }
+  .laws-foot {
+    margin: var(--space-10) 0 0;
+    max-inline-size: 72ch;
+    color: var(--color-ink);
+    font-size: 1.05rem;
+    line-height: 1.6;
+  }
+  .back { margin-block-start: var(--space-12); }
+  .back a {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--color-forest);
+    text-decoration: none;
+  }
+  .back a:hover { text-decoration: underline; }
+</style>

@@ -1,0 +1,71 @@
+{
+  "about": {
+    "title": "Sobre o linux-meta",
+    "intro": "Projeto em estágio inicial (v0.1 · early access). Construímos em público uma camada de metadados para pacotes Linux — classificação etária, traduções, sinais de privacidade. A maior parte do que existe hoje é redistribuição de dados upstream com canonicalização e preparação de snapshots completos para reuso local. Trabalho próprio do projeto ainda é pequeno e está documentado abaixo.",
+    "missionTitle": "Missão",
+    "missionBody": "Construir uma camada aberta de metadados para o ecossistema Linux — começando por classificação etária e descrições traduzidas. Tudo CC0, auditável, integrável por qualquer distribuição.",
+    "valuesTitle": "Valores",
+    "valuesBody": "Honestidade sobre o que entregamos hoje · Provenance em toda peça de dado · Independência de empresas e governos · Acessibilidade obrigatória · Privacidade desde o design.",
+    "governanceTitle": "Governança",
+    "governanceBody": "Projeto independente. A página pública de governança está em /governanca e ainda evolui. Até a estrutura formal ficar completa, decisões são tomadas pelo mantenedor com input de contribuidores no GitHub.",
+    "originTitle": "Origem",
+    "originBody": "Projeto iniciado em 2026 a partir de discussão sobre leis recentes de classificação indicativa de conteúdo digital em vários países. Em vez de aguardar, decidimos construir a infraestrutura aberta que falta. Trabalho continua em estágio inicial — colaboração e crítica são bem-vindas.",
+    "stateTitle": "Estado real do projeto",
+    "stateIntro": "Métricas exatas atualizadas a partir do banco. Separamos o que é redistribuição (imported) do que é trabalho do projeto (ai/human):",
+    "gapsTitle": "O que ainda não fazemos",
+    "gapsList": [
+      "Não oferecemos API como produto. O foco é disponibilizar snapshots completos para download e reuso local.",
+      "Não há revisores humanos ativos ainda. Todas as classificações próprias são geradas por IA local e estão aguardando revisão.",
+      "Não publicamos nenhum relatório financeiro ainda. Primeiro relatório será emitido após o primeiro semestre de operação efetiva.",
+      "Não temos parcerias formais com distribuições, ONGs ou órgãos públicos. Estamos abertos a conversas.",
+      "Não temos selo, certificação ou marca registrada. Tudo o que oferecemos é o catálogo aberto e os snapshots públicos."
+    ]
+  },
+  "partners": {
+    "title": "Parceiros",
+    "intro": "Ainda não temos parcerias formais documentadas. Esta página existe como convite para distribuições, ONGs e instituições interessadas em colaborar.",
+    "openTitle": "Procuramos parceiros",
+    "openBody": "Se você representa uma distribuição Linux que quer reutilizar o dataset completo, uma ONG que trabalha com proteção infantil online, uma instituição educacional ou um órgão público interessado em padrões abertos: abra uma issue no GitHub ou escreva pelo formulário de contato.",
+    "criteriaTitle": "Critérios mínimos",
+    "criteriaBody": "Trabalhamos só com organizações que aceitem (1) divulgação pública da parceria com escopo claro, (2) compromisso com dataset aberto CC0, (3) declaração formal de conflito de interesse.",
+    "ctaContact": "Abrir issue no GitHub"
+  },
+  "sponsor": {
+    "title": "Apoiar o projeto",
+    "intro": "Estrutura financeira ainda em construção. Não recebemos doações enquanto Open Collective / GitHub Sponsors não estiverem configurados com canal público de prestação de contas.",
+    "soonTitle": "Em breve",
+    "soonBody": "Configuração prevista: Open Collective com transparência total de receita e despesa, ou GitHub Sponsors com link para relatório semestral. Sem tiers, sem benefícios para patrocinador além de menção pública opcional.",
+    "interestTitle": "Manifeste interesse",
+    "interestBody": "Se você ou sua organização quer apoiar quando o canal estiver pronto: abra uma issue no GitHub com a tag `funding` ou aguarde anúncio na página inicial.",
+    "ctaIssue": "Abrir issue no GitHub"
+  },
+  "transparency": {
+    "title": "Transparência",
+    "intro": "Esta página é o reflexo direto do que o projeto entrega — sem maquiagem.",
+    "gapTitle": "O que prometemos × O que entregamos hoje",
+    "gapIntro": "Lista crua dos compromissos pendentes:",
+    "gapItems": [
+      ["Relatórios financeiros semestrais", "0 publicados. Primeiro previsto após primeiro semestre operacional efetivo."],
+      ["Revisores humanos validando classificações", "0 ativos. Onboarding em construção."],
+      ["Parcerias formais com distribuições", "0 documentadas."],
+      ["API com SLA", "Não prometida. O modelo de distribuição é snapshot completo para download e reuso local."],
+      ["Tradução de descrições", "≈3.990 pacotes têm pelo menos um idioma — 99% importado do AppStream upstream do próprio autor. Apenas 18 strings geradas pela IA do projeto. 0 traduzidas por humanos identificados."],
+      ["Log público de decisões estruturais", "Em construção (página /governanca)."]
+    ],
+    "metricsTitle": "Métricas reais (atualizadas do banco a cada minuto)",
+    "metricsBody": "Contadores na página inicial são separados por origem (importado vs IA vs humano) para não inflar o trabalho próprio do projeto."
+  },
+  "conduct": {
+    "title": "Código de Conduta",
+    "intro": "Quem participa do linux-meta — contribuidor, revisor ou mantenedor — segue estes princípios:",
+    "rules": [
+      "Trate pessoas com respeito, independentemente de origem, gênero, religião, opinião política ou capacidade.",
+      "Critique o trabalho, nunca a pessoa.",
+      "Quando discordar, ofereça evidência. Quando errar, reconheça.",
+      "Não compartilhe dados pessoais de terceiros, nem mesmo de quem abriu disputa.",
+      "Não use o projeto para promover agenda político-partidária.",
+      "Reporte abusos via GitHub Issues privado ou contato direto com mantenedor (link no /sobre)."
+    ],
+    "enforce": "Violações são apuradas pelo mantenedor e podem resultar em suspensão temporária ou banimento permanente. Estrutura de comitê de conduta será formalizada quando houver ≥3 mantenedores ativos."
+  }
+}

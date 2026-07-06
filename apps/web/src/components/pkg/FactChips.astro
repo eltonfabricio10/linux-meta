@@ -1,0 +1,129 @@
+---
+/**
+ * FactChips — at-a-glance "what is this" row for a package detail page.
+ * Surfaces package_profile facets that the public pages never showed before:
+ * component type, interface (GUI/CLI/TUI), launchable, flags, source count.
+ */
+import type { Locale } from '~/i18n';
+
+interface Profile {
+  componentType?: string | null;
+  interfaceKinds?: unknown;
+  launchable?: boolean | null;
+  requiresTerminal?: boolean | null;
+  isBackgroundService?: boolean | null;
+  isDependencyOnly?: boolean | null;
+}
+
+interface Props {
+  locale: Locale;
+  profile?: Profile | null;
+  sourceCount?: number;
+}
+
+const { locale, profile, sourceCount = 1 } = Astro.props;
+const isPt = locale === 'pt';
+
+const componentLabels: Record<string, [string, string]> = {
+  'desktop-application': ['App de desktop', 'Desktop app'],
+  app: ['Aplicativo', 'App'],
+  game: ['Jogo', 'Game'],
+  service: ['Serviço', 'Service'],
+  library: ['Biblioteca', 'Library'],
+  driver: ['Driver', 'Driver'],
+  'kernel-module': ['Módulo de kernel', 'Kernel module'],
+  firmware: ['Firmware', 'Firmware'],
+  font: ['Fonte', 'Font'],
+  theme: ['Tema', 'Theme'],
+  'icon-theme': ['Tema de ícones', 'Icon theme'],
+  plugin: ['Plugin', 'Plugin'],
+  addon: ['Extensão', 'Add-on'],
+  codec: ['Codec', 'Codec'],
+  'input-method': ['Método de entrada', 'Input method'],
+  localization: ['Localização', 'Localization'],
+  documentation: ['Documentação', 'Documentation'],
+  data: ['Dados', 'Data'],
+  'build-tool': ['Ferramenta de build', 'Build tool'],
+  runtime: ['Runtime', 'Runtime'],
+  metapackage: ['Metapacote', 'Metapackage'],
+  compatibility: ['Compatibilidade', 'Compatibility'],
+};
+
+const interfaceLabels: Record<string, [string, string]> = {
+  gui: ['Interface gráfica', 'GUI'],
+  cli: ['Linha de comando', 'CLI'],
+  tui: ['Terminal (TUI)', 'TUI'],
+  web: ['Web', 'Web'],
+  server: ['Servidor', 'Server'],
+  system: ['Sistema', 'System'],
+  development: ['Desenvolvimento', 'Dev'],
+};
+
+function pick(pair: [string, string] | undefined, fallback: string): string {
+  if (!pair) return fallback;
+  return isPt ? pair[0] : pair[1];
+}
+
+const ct = profile?.componentType && profile.componentType !== 'unknown' ? profile.componentType : null;
+const ifaces = Array.isArray(profile?.interfaceKinds)
+  ? (profile!.interfaceKinds as string[]).filter((k) => typeof k === 'string').slice(0, 3)
+  : [];
+
+type Chip = { text: string; kind: 'type' | 'iface' | 'flag' | 'source' };
+const chips: Chip[] = [];
+if (ct) chips.push({ text: pick(componentLabels[ct], ct), kind: 'type' });
+for (const k of ifaces) chips.push({ text: pick(interfaceLabels[k], k.toUpperCase()), kind: 'iface' });
+if (profile?.launchable) chips.push({ text: isPt ? 'Abre direto' : 'Launchable', kind: 'flag' });
+if (profile?.requiresTerminal) chips.push({ text: isPt ? 'Roda no terminal' : 'Runs in terminal', kind: 'flag' });
+if (profile?.isBackgroundService) chips.push({ text: isPt ? 'Serviço em segundo plano' : 'Background service', kind: 'flag' });
+if (profile?.isDependencyOnly) chips.push({ text: isPt ? 'Só dependência' : 'Dependency only', kind: 'flag' });
+if (sourceCount > 1) chips.push({ text: isPt ? `Mesmo app · ${sourceCount} fontes` : `Same app · ${sourceCount} sources`, kind: 'source' });
+---
+
+{chips.length > 0 && (
+  <ul class="factchips" aria-label={isPt ? 'Características' : 'Facts'}>
+    {chips.map((c) => <li class={`chip chip-${c.kind}`}>{c.text}</li>)}
+  </ul>
+)}
+
+<style>
+  .factchips {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-5) 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    font-weight: 500;
+    line-height: 1.3;
+    border: 1px solid var(--color-rule);
+    color: var(--color-ink);
+  }
+  .chip-type {
+    background: color-mix(in srgb, var(--color-forest) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-forest) 30%, transparent);
+    color: var(--color-forest);
+    font-weight: 600;
+  }
+  .chip-iface {
+    background: color-mix(in srgb, var(--color-slate-blue) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-slate-blue) 26%, transparent);
+    color: var(--color-slate-blue);
+  }
+  .chip-flag { background: var(--color-paper-elev); color: var(--color-ink-muted); }
+  .chip-source {
+    background: color-mix(in srgb, var(--age-12) 12%, transparent);
+    border-color: color-mix(in srgb, var(--age-12) 28%, transparent);
+    color: color-mix(in srgb, var(--age-12) 82%, black);
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+  }
+</style>

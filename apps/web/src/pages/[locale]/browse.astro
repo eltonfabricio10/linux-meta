@@ -1,0 +1,725 @@
+---
+export const prerender = false;
+
+import Base from '~/layouts/Base.astro';
+import ProvenanceChip from '~/components/ProvenanceChip.astro';
+import EditOverlay from '~/components/EditOverlay.astro';
+import EspecimenCard from '~/components/EspecimenCard.astro';
+import FacetBar from '~/components/FacetBar.astro';
+import Container from '~/components/layout/Container.astro';
+import { getLocaleFromUrl, t, locales, localePath, format } from '~/i18n';
+import { searchPackages, searchPackagesSemantic } from '~/lib/packages';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+import {
+  taxonomy,
+  getCategoryCounts,
+  queryCatalog,
+  getCategoryLabel,
+  getSubcategoryLabel,
+  type CategoryCount,
+  type CatalogFacets,
+} from '~/lib/categories';
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+
+const L = {
+  browseTitle: isPt ? 'Explorar o catálogo' : 'Browse the catalog',
+  categoriesNav: isPt ? 'Índice' : 'Index',
+  allCategories: isPt ? 'Tudo' : 'All',
+  resultsInCategory: isPt ? '{n} pacotes em {c}' : '{n} packages in {c}',
+  emptyCategory: isPt ? 'Nenhum pacote nesta seção ainda.' : 'No packages in this section yet.',
+  breadcrumbHome: isPt ? 'Início' : 'Home',
+  breadcrumbBrowse: isPt ? 'Explorar' : 'Browse',
+  prev: isPt ? 'Anterior' : 'Previous',
+  next: isPt ? 'Próximo' : 'Next',
+  pageOf: isPt ? 'Página {p} de {total}' : 'Page {p} of {total}',
+  loadingCounts: isPt ? 'Carregando categorias…' : 'Loading categories…',
+  scopedSearch: isPt ? 'Buscando em {c}' : 'Searching within {c}',
+};
+
+const q = (Astro.url.searchParams.get('q') ?? '').slice(0, 100);
+const mode = Astro.url.searchParams.get('mode') === 'semantic' ? 'semantic' : 'text';
+const categoryParam = (Astro.url.searchParams.get('category') ?? '').slice(0, 64);
+const subcategoryParam = (Astro.url.searchParams.get('subcategory') ?? '').slice(0, 64);
+const offsetParam = Number.parseInt(Astro.url.searchParams.get('offset') ?? '0', 10);
+const safeOffset = Number.isFinite(offsetParam) && offsetParam >= 0 ? Math.min(offsetParam, 100_000) : 0;
+const PAGE_SIZE = 30;
+
+/* Facets (GET, shareable). Validate against known values. */
+const COMPONENT_TYPES = new Set(['app', 'game', 'library', 'theme', 'font', 'service', 'driver', 'runtime']);
+const INTERFACE_KINDS = new Set(['gui', 'cli', 'tui', 'web', 'server']);
+const SOURCES = new Set(['flathub', 'manjaro', 'aur', 'debian']);
+const maxAgeRaw = Number.parseInt(Astro.url.searchParams.get('maxAge') ?? '', 10);
+const typeParam = Astro.url.searchParams.get('type') ?? '';
+const ifaceParam = Astro.url.searchParams.get('iface') ?? '';
+const sourceFacet = Astro.url.searchParams.get('source') ?? '';
+const facets: CatalogFacets = {
+  maxAge: Number.isFinite(maxAgeRaw) && maxAgeRaw >= 0 && maxAgeRaw <= 18 ? maxAgeRaw : undefined,
+  includeUnrated: Astro.url.searchParams.get('includeUnrated') === '1',
+  componentType: COMPONENT_TYPES.has(typeParam) ? typeParam : undefined,
+  interfaceKind: INTERFACE_KINDS.has(ifaceParam) ? ifaceParam : undefined,
+  source: SOURCES.has(sourceFacet) ? sourceFacet : undefined,
+  appsOnly: Astro.url.searchParams.get('appsOnly') === '1',
+};
+const hasFacets = facets.maxAge != null || !!facets.componentType
+  || !!facets.interfaceKind || !!facets.source || facets.appsOnly;
+
+const activeCategory = taxonomy.find((c) => c.slug === categoryParam) ?? null;
+const activeSubcategory = activeCategory
+  ? activeCategory.subcategories.find((s) => s.slug === subcategoryParam) ?? null
+  : null;
+
+let counts: CategoryCount[] = [];
+let countsError: string | null = null;
+try {
+  counts = await getCategoryCounts();
+} catch (e) {
+  countsError = (e as Error).message;
+}
+
+const countMap = new Map<string, number>();
+let totalAll = 0;
+for (const c of counts) {
+  countMap.set(`${c.category}/${c.subcategory}`, c.count);
+  totalAll += c.count;
+}
+const categoryTotal = (catSlug: string): number => {
+  let n = 0;
+  const cat = taxonomy.find((c) => c.slug === catSlug);
+  if (!cat) return 0;
+  for (const s of cat.subcategories) n += countMap.get(`${catSlug}/${s.slug}`) ?? 0;
+  return n;
+};
+
+let searchHits: Awaited<ReturnType<typeof searchPackages>> = [];
+let fellBack = false;
+let catalogListing: Awaited<ReturnType<typeof queryCatalog>> | null = null;
+let categoryError: string | null = null;
+
+/* A free-text query with no category/facets uses the dedicated search backend;
+   otherwise the faceted catalog query drives the listing. */
+const isSearchView = !!q && !activeCategory && !hasFacets;
+if (isSearchView) {
+  if (mode === 'semantic') {
+    const r = await searchPackagesSemantic(q, 30);
+    searchHits = r.hits;
+    fellBack = r.outcome === 'fallback-trgm';
+  } else {
+    searchHits = await searchPackages(q, 30, locale);
+  }
+} else if (activeCategory || hasFacets) {
+  try {
+    catalogListing = await queryCatalog(
+      {
+        category: activeCategory?.slug,
+        subcategory: activeSubcategory?.slug,
+        search: q || undefined,
+        ...facets,
+      },
+      PAGE_SIZE,
+      safeOffset,
+      locale,
+    );
+  } catch (e) {
+    categoryError = (e as Error).message;
+  }
+}
+
+function buildUrl(params: Record<string, string | null>): string {
+  const u = new URL(Astro.url.pathname, Astro.url);
+  const merged = new URLSearchParams(Astro.url.search);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null || v === '') merged.delete(k);
+    else merged.set(k, v);
+  }
+  merged.delete('offset');
+  const qs = merged.toString();
+  return qs ? `${u.pathname}?${qs}` : u.pathname;
+}
+
+function paginationUrl(newOffset: number): string {
+  const merged = new URLSearchParams(Astro.url.search);
+  if (newOffset <= 0) merged.delete('offset');
+  else merged.set('offset', String(newOffset));
+  const qs = merged.toString();
+  return qs ? `${Astro.url.pathname}?${qs}` : Astro.url.pathname;
+}
+
+const browseHref = buildUrl({ category: null, subcategory: null });
+
+const showFeatured = !activeCategory && !q && !hasFacets;
+const featuredSlugs = ['gcompris', 'gimp', 'firefox', 'steam'];
+type FeaturedRow = {
+  id: number;
+  canonical_slug: string;
+  name: string;
+  age_min: number | null;
+  dominant_source: string | null;
+  summary: string | null;
+};
+let featured: FeaturedRow[] = [];
+if (showFeatured) {
+  const rows = await db.execute<FeaturedRow>(sql`
+    WITH pkg AS (
+      SELECT DISTINCT ON (COALESCE(canonical_slug, slug))
+        id, COALESCE(canonical_slug, slug) AS canonical_slug, name
+      FROM package
+      WHERE COALESCE(canonical_slug, slug) IN (${sql.join(featuredSlugs.map((s) => sql`${s}`), sql`, `)})
+      ORDER BY COALESCE(canonical_slug, slug),
+        CASE source WHEN 'flathub' THEN 4 WHEN 'manjaro' THEN 3 WHEN 'aur' THEN 2 ELSE 0 END DESC
+    )
+    SELECT p.id, p.canonical_slug, p.name,
+      rc.age_min, rc.dominant_source,
+      COALESCE(
+        (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = ${locale} LIMIT 1),
+        (SELECT t.summary FROM package_translation t WHERE t.package_id = p.id AND t.locale = 'en' LIMIT 1)
+      ) AS summary
+    FROM pkg p
+    LEFT JOIN rating_current rc ON rc.package_id = p.id
+  `);
+  featured = featuredSlugs
+    .map((s) => rows.find((r) => r.canonical_slug === s))
+    .filter((r): r is FeaturedRow => r !== undefined);
+}
+const currentPage = Math.floor(safeOffset / PAGE_SIZE) + 1;
+const totalPages = catalogListing ? Math.max(1, Math.ceil(catalogListing.total / PAGE_SIZE)) : 1;
+const browseFacetAction = localePath(locale, '/browse');
+
+const sectionTitle = activeCategory
+  ? (activeSubcategory
+      ? getSubcategoryLabel(activeCategory.slug, activeSubcategory.slug, locale)
+      : getCategoryLabel(activeCategory.slug, locale))
+  : L.browseTitle;
+---
+
+<Base title={activeCategory ? `${getCategoryLabel(activeCategory.slug, locale)} – ${L.browseTitle}` : L.browseTitle}>
+  <Container width="wide">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href={localePath(locale, '/')}>{L.breadcrumbHome}</a></li>
+        <li><a href={browseHref}>{L.breadcrumbBrowse}</a></li>
+        {activeCategory && (
+          <li>
+            {activeSubcategory ? (
+              <a href={buildUrl({ category: activeCategory.slug, subcategory: null })}>
+                {getCategoryLabel(activeCategory.slug, locale)}
+              </a>
+            ) : (
+              <span aria-current="page">{getCategoryLabel(activeCategory.slug, locale)}</span>
+            )}
+          </li>
+        )}
+        {activeSubcategory && (
+          <li><span aria-current="page">{getSubcategoryLabel(activeCategory!.slug, activeSubcategory.slug, locale)}</span></li>
+        )}
+      </ol>
+    </nav>
+
+    <header class="head">
+      <p class="kicker">{isPt ? 'EXPLORAR · ' : 'BROWSE · '}{(activeCategory?.slug ?? (isPt ? 'todos' : 'all')).toUpperCase()}</p>
+      <h1 class="title">{sectionTitle}</h1>
+      {catalogListing && (
+        <p class="lead">
+          {activeCategory
+            ? format(L.resultsInCategory, {
+                n: catalogListing.total.toLocaleString(locale),
+                c: activeSubcategory
+                  ? getSubcategoryLabel(activeCategory.slug, activeSubcategory.slug, locale)
+                  : getCategoryLabel(activeCategory.slug, locale),
+              })
+            : `${catalogListing.total.toLocaleString(locale)} ${isPt ? 'pacotes' : 'packages'}`}
+        </p>
+      )}
+    </header>
+
+    {showFeatured && featured.length > 0 && (
+      <section class="featured" aria-label={isPt ? 'Comece por aqui' : 'Start here'}>
+        <p class="featured-cap">{isPt ? 'Comece por aqui' : 'Start here'}</p>
+        <div class="featured-grid">
+          {featured.map((row) => (
+            <EditOverlay
+              href={localePath(locale, `/admin/packages/${row.id}`)}
+              field={isPt ? 'pacote' : 'package'}
+              block
+            >
+              <EspecimenCard
+                locale={locale}
+                id={row.id}
+                slug={row.canonical_slug}
+                name={row.name}
+                summary={row.summary}
+                ageMin={row.age_min}
+                source={row.dominant_source}
+              />
+            </EditOverlay>
+          ))}
+        </div>
+      </section>
+    )}
+
+    <div class="browse-layout">
+      <aside class="sidebar" aria-label={L.categoriesNav}>
+        <p class="side-h">{L.categoriesNav}</p>
+        <nav aria-label={L.categoriesNav}>
+          <ol class="cat-list">
+            <li>
+              <a
+                href={browseHref}
+                class={!activeCategory ? 'cat-link active' : 'cat-link'}
+                aria-current={!activeCategory ? 'page' : undefined}
+              >
+                <span class="cat-name">{L.allCategories}</span>
+                <span class="cat-count">{totalAll.toLocaleString(locale)}</span>
+              </a>
+            </li>
+            {taxonomy.map((cat) => {
+              const catCount = categoryTotal(cat.slug);
+              const isActiveCat = activeCategory?.slug === cat.slug;
+              return (
+                <li>
+                  <a
+                    href={buildUrl({ category: cat.slug, subcategory: null })}
+                    aria-current={isActiveCat && !activeSubcategory ? 'page' : undefined}
+                    class={isActiveCat && !activeSubcategory ? 'cat-link active' : 'cat-link'}
+                  >
+                    <span class="cat-name">{getCategoryLabel(cat.slug, locale)}</span>
+                    <span class="cat-count">{catCount.toLocaleString(locale)}</span>
+                  </a>
+                  {isActiveCat && (
+                    <ol class="sub-list">
+                      {cat.subcategories.map((sub) => {
+                        const k = `${cat.slug}/${sub.slug}`;
+                        const n = countMap.get(k) ?? 0;
+                        const isActive = activeSubcategory?.slug === sub.slug;
+                        return (
+                          <li>
+                            <a
+                              href={buildUrl({ category: cat.slug, subcategory: sub.slug })}
+                              class={isActive ? 'sub-link active' : 'sub-link'}
+                              aria-current={isActive ? 'page' : undefined}
+                            >
+                              <span class="cat-name">{getSubcategoryLabel(cat.slug, sub.slug, locale)}</span>
+                              <span class="cat-count">{n.toLocaleString(locale)}</span>
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {countsError && <p class="muted small warn">{countsError}</p>}
+        </nav>
+      </aside>
+
+      <div class="main">
+        <form method="get" class="searchbar" role="search">
+          {activeCategory && <input type="hidden" name="category" value={activeCategory.slug} />}
+          {activeSubcategory && <input type="hidden" name="subcategory" value={activeSubcategory.slug} />}
+          <label class="search-label" for="search-q">
+            <span class="sr-only">{dict.search.placeholder}</span>
+            <input
+              id="search-q"
+              name="q"
+              type="search"
+              value={q}
+              autocomplete="off"
+              placeholder={dict.search.placeholder}
+            />
+          </label>
+          <button type="submit">{dict.search.submit} →</button>
+        </form>
+
+        {activeCategory && q && (
+          <p class="muted small">{format(L.scopedSearch, { c: getCategoryLabel(activeCategory.slug, locale) })}</p>
+        )}
+
+        {!isSearchView && (
+          <FacetBar
+            locale={locale}
+            action={browseFacetAction}
+            category={activeCategory?.slug ?? null}
+            subcategory={activeSubcategory?.slug ?? null}
+            q={q || null}
+            facets={facets}
+          />
+        )}
+
+        {isSearchView && (
+          <>
+            <fieldset class="modes" role="radiogroup" aria-label={dict.search.modeText}>
+              <label>
+                <input type="radio" name="mode" value="text" form="mode-form" checked={mode === 'text'} />
+                <span>{dict.search.modeText}</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="semantic" form="mode-form" checked={mode === 'semantic'} />
+                <span>{dict.search.modeSemantic}</span>
+              </label>
+            </fieldset>
+            <form id="mode-form" method="get" hidden>
+              <input type="hidden" name="q" value={q} />
+            </form>
+          </>
+        )}
+
+        {fellBack && <p class="muted small warn">{dict.search.semanticUnavailable}</p>}
+
+        {categoryError && <p class="muted small warn">{categoryError}</p>}
+        {catalogListing && catalogListing.items.length === 0 && (
+          <p class="muted">{L.emptyCategory}</p>
+        )}
+        {catalogListing && catalogListing.items.length > 0 && (
+          <>
+            <div class="card-grid">
+              {catalogListing.items.map((h) => (
+                <EditOverlay
+                  href={localePath(locale, `/admin/packages/${h.id}`)}
+                  field={isPt ? 'pacote' : 'package'}
+                  block
+                >
+                  <EspecimenCard
+                    locale={locale}
+                    id={h.id}
+                    slug={h.canonicalSlug ?? h.slug}
+                    name={h.name}
+                    summary={h.summary}
+                    ageMin={h.ageMin}
+                    source={h.dominantSource ?? h.source}
+                  />
+                </EditOverlay>
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <nav class="pagination" aria-label="Pagination">
+                {safeOffset > 0 && (
+                  <a href={paginationUrl(Math.max(0, safeOffset - PAGE_SIZE))} rel="prev">← {L.prev}</a>
+                )}
+                <span class="muted small mono">{format(L.pageOf, { p: currentPage, total: totalPages })}</span>
+                {safeOffset + PAGE_SIZE < catalogListing.total && (
+                  <a href={paginationUrl(safeOffset + PAGE_SIZE)} rel="next">{L.next} →</a>
+                )}
+              </nav>
+            )}
+          </>
+        )}
+
+        {!catalogListing && !isSearchView && <p class="muted">{dict.search.empty}</p>}
+
+        {isSearchView && searchHits.length === 0 && (
+          <p class="muted">{format(dict.search.noResults, { q })}</p>
+        )}
+
+        {isSearchView && searchHits.length > 0 && (
+          <>
+            <p class="muted small">{format(dict.search.resultCount, { n: searchHits.length, q })}</p>
+            <ol class="results">
+              {searchHits.map((h, i) => (
+                <li class="hit">
+                  <span class="hit-no">{String(i + 1).padStart(3, '0')}</span>
+                  <div class="hit-body">
+                    <a href={localePath(locale, `/p/${h.canonicalSlug ?? h.slug}`)} class="hit-link">
+                      <span class="hit-name">{h.name}</span>
+                      {h.latestVersion && <code class="hit-ver">{h.latestVersion}</code>}
+                    </a>
+                    {h.summary && <p class="hit-summary">{h.summary}</p>}
+                    {h.summarySource !== 'none' && h.summarySource !== 'raw_metadata' && (
+                      <div class="prov">
+                        <ProvenanceChip
+                          source={h.summarySource === 'translation_upstream' ? 'upstream'
+                                : h.summarySource === 'translation_ai' ? 'ai_claude_code'
+                                : 'human_reviewer'}
+                          locale={locale}
+                          compact={true}
+                        />
+                        {h.summaryLocale && <small class="loc"><code>{h.summaryLocale}</code></small>}
+                      </div>
+                    )}
+                    <p class="hit-meta">
+                      {h.sources.map((s) => (
+                        <span class={`src src-${s}`}>{s}</span>
+                      ))}
+                      {mode === 'semantic' && (
+                        <span class="score">{dict.search.score}: {(h.similarity * 100).toFixed(0)}%</span>
+                      )}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
+    </div>
+  </Container>
+</Base>
+
+<style>
+  .crumbs ol {
+    list-style: none; padding: 0;
+    margin: var(--space-8) 0 var(--space-3);
+    display: flex; flex-wrap: wrap; gap: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+  .crumbs li + li::before { content: '·'; margin-inline-end: var(--space-2); }
+  .crumbs a { color: var(--color-forest); text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+  .crumbs [aria-current="page"] { color: var(--color-ink); }
+
+  .head { margin-block-end: var(--space-8); border-block-end: 1px solid var(--color-rule); padding-block-end: var(--space-6); }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-terracotta);
+    margin: 0 0 var(--space-3);
+  }
+  .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-style: normal;
+    font-size: clamp(2.2rem, 3vw + 1rem, 3.2rem);
+    line-height: 1.05;
+    margin: 0;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+  .lead {
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 1.05rem;
+    line-height: 1.55;
+    color: var(--color-ink-muted);
+    margin: var(--space-3) 0 0;
+  }
+
+  .featured {
+    margin-block-end: var(--space-10);
+  }
+  .featured-cap {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    margin: 0 0 var(--space-4);
+  }
+  .featured-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--space-4);
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--space-4);
+    margin-block-end: var(--space-6);
+  }
+
+  .browse-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: var(--space-12);
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .browse-layout { grid-template-columns: 1fr; gap: var(--space-6); }
+    .sidebar { position: static !important; }
+  }
+
+  /* Editorial index sidebar */
+  .sidebar {
+    position: sticky; top: var(--space-6);
+    border-inline-end: 1px solid var(--color-rule);
+    padding-inline-end: var(--space-6);
+  }
+  .side-h {
+    font-family: var(--font-mono);
+    font-size: 0.7rem; letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    margin: 0 0 var(--space-3);
+  }
+  .cat-list, .sub-list { list-style: none; padding: 0; margin: 0; }
+  .cat-list > li { margin-block-end: var(--space-1); }
+  .cat-link, .sub-link {
+    display: grid;
+    grid-template-columns: 1fr max-content;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+    text-decoration: none;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+  }
+  .cat-name { color: inherit; }
+  .cat-count {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--color-ink-muted);
+  }
+  .cat-link:hover, .sub-link:hover { color: var(--color-forest); }
+  .cat-link:hover .cat-name, .sub-link:hover .cat-name { text-decoration: underline; text-underline-offset: 0.2em; }
+  .cat-link.active, .sub-link.active {
+    color: var(--color-forest);
+    font-weight: 600;
+  }
+  .sub-list {
+    margin-block: var(--space-1);
+    padding-inline-start: var(--space-3);
+  }
+  .sub-link { font-size: 0.85rem; }
+
+  /* Searchbar editorial */
+  .searchbar {
+    display: flex;
+    gap: var(--space-3);
+    margin-block-end: var(--space-6);
+    align-items: stretch;
+    max-inline-size: 640px;
+  }
+  .search-label { flex: 1; display: block; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .searchbar input[type="search"] {
+    inline-size: 100%;
+    padding: var(--space-3) var(--space-3);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-md);
+    background: var(--color-paper-elev);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    color: var(--color-ink);
+    outline: none;
+  }
+  .searchbar input[type="search"]:focus { border-color: var(--color-forest); }
+  .searchbar input[type="search"]::placeholder { color: var(--color-ink-muted); }
+  .searchbar button {
+    padding: var(--space-2) var(--space-4);
+    background: transparent;
+    border: 1px solid var(--color-ink);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .searchbar button:hover { background: var(--color-ink); color: var(--color-paper); }
+
+  .modes {
+    display: flex; gap: var(--space-4);
+    border: none; padding: 0;
+    margin: 0 0 var(--space-6);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+  .modes label { display: inline-flex; gap: var(--space-2); align-items: center; cursor: pointer; }
+
+  .muted { color: var(--color-ink-muted); }
+  .mono { font-family: var(--font-mono); }
+  .small { font-size: var(--text-sm); }
+  .warn { color: var(--color-terracotta); }
+
+  /* Editorial list of hits */
+  .results {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column;
+  }
+  .hit {
+    display: grid;
+    grid-template-columns: 3em 1fr;
+    align-items: start;
+    gap: var(--space-3);
+    padding: var(--space-4) 0;
+    border-block-start: 1px solid var(--color-rule);
+    position: relative;
+  }
+  .hit:first-child { border-block-start: none; }
+  .hit-no {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--color-ink-muted);
+    padding-block-start: 0.35em;
+    letter-spacing: 0.04em;
+  }
+  .hit-body { min-inline-size: 0; }
+  .hit-link {
+    display: inline-flex; align-items: baseline; gap: var(--space-3);
+    text-decoration: none; color: var(--color-ink);
+  }
+  .hit-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.2rem;
+    color: var(--color-ink);
+  }
+  .hit-link:hover .hit-name { color: var(--color-forest); text-decoration: underline; text-underline-offset: 0.18em; }
+  .hit-ver {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-ink-muted);
+  }
+  .hit-summary {
+    margin: var(--space-2) 0;
+    color: var(--color-ink);
+    max-inline-size: 62ch;
+    line-height: 1.5;
+  }
+  .hit-meta {
+    margin: var(--space-2) 0 0;
+    display: flex; flex-wrap: wrap; gap: var(--space-2);
+    align-items: baseline;
+  }
+  .prov { display: flex; gap: var(--space-2); align-items: center; margin-block-end: var(--space-2); }
+  .loc code { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-ink-muted); }
+  .src {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+    padding: 1px var(--space-2) 1px 7px;
+    border-inline-start: 3px solid var(--color-rule);
+    color: var(--color-ink);
+  }
+  .src-flathub { border-inline-start-color: var(--color-slate-blue); }
+  .src-manjaro { border-inline-start-color: var(--age-3); }
+  .src-aur     { border-inline-start-color: var(--color-terracotta); }
+  .src-debian  { border-inline-start-color: var(--age-12); }
+  .score {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-forest);
+  }
+  .pagination {
+    display: flex; align-items: center; gap: var(--space-4);
+    margin-block-start: var(--space-6);
+    padding-block: var(--space-4);
+    border-block-start: 1px solid var(--color-rule);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+  .pagination a {
+    color: var(--color-forest);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+  .pagination a:hover { color: var(--color-forest-hover); }
+</style>

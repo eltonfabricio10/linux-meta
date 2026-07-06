@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">linux-meta</title>
+  <desc id="desc">Open Linux metadata catalog with age ratings, translations and provenance.</desc>
+  <rect width="1200" height="630" fill="#fafafa"/>
+  <rect x="72" y="72" width="1056" height="486" rx="24" fill="#ffffff" stroke="#d8d8d8" stroke-width="2"/>
+  <text x="120" y="174" fill="#1a5fb4" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="700">linux-meta</text>
+  <text x="120" y="260" fill="#1d1d1d" font-family="Inter, system-ui, sans-serif" font-size="58" font-weight="700">Open metadata for Linux catalogs</text>
+  <text x="120" y="332" fill="#3d3846" font-family="Inter, system-ui, sans-serif" font-size="34">Age ratings, translations and provenance for package stores.</text>
+  <g transform="translate(120 410)">
+    <rect width="180" height="68" rx="12" fill="#1a5fb4"/>
+    <text x="32" y="44" fill="#ffffff" font-family="Inter, system-ui, sans-serif" font-size="28" font-weight="700">ratings</text>
+    <rect x="208" width="210" height="68" rx="12" fill="#b65400"/>
+    <text x="240" y="44" fill="#ffffff" font-family="Inter, system-ui, sans-serif" font-size="28" font-weight="700">translations</text>
+    <rect x="446" width="210" height="68" rx="12" fill="#1f7a4d"/>
+    <text x="478" y="44" fill="#ffffff" font-family="Inter, system-ui, sans-serif" font-size="28" font-weight="700">open data</text>
+  </g>
+</svg>

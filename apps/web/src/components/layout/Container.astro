@@ -1,0 +1,22 @@
+---
+export interface Props {
+  width?: 'page' | 'narrow' | 'wide';
+  as?: keyof HTMLElementTagNameMap;
+}
+const { width = 'page', as: Tag = 'div' } = Astro.props;
+---
+<Tag class:list={['container', `container--${width}`]}>
+  <slot />
+</Tag>
+<style>
+  .container {
+    margin-inline: auto;
+    padding-inline: var(--space-6);
+  }
+  .container--page   { max-inline-size: 72rem; }
+  .container--narrow { max-inline-size: 56rem; }
+  .container--wide   { max-inline-size: 88rem; }
+  @media (max-width: 640px) {
+    .container { padding-inline: var(--space-4); }
+  }
+</style>

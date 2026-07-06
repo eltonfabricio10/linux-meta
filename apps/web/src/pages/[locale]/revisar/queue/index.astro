@@ -1,0 +1,169 @@
+---
+import Base from '~/layouts/Base.astro';
+import TranslationEditor from '~/components/admin/TranslationEditor';
+import { getLocaleFromUrl, t, locales, localePath } from '~/i18n';
+import { db, schema } from '~/lib/db';
+import { eq, and } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { getReviewQueueItem } from '~/lib/review-queue';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+const dict = t(locale);
+const isPt = locale === 'pt';
+
+if (!Astro.locals.user) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['reviewer', 'admin'])) {
+  return Astro.redirect(localePath(locale, '/auth/login'));
+}
+
+const reviewLocale = Astro.url.searchParams.get('locale') ?? (isPt ? 'pt-br' : 'en');
+const skipIds = (Astro.url.searchParams.get('skip') ?? '')
+  .split(',')
+  .map((s) => Number(s))
+  .filter((n) => Number.isInteger(n) && n > 0)
+  .slice(0, 200);
+
+const { item, total } = await getReviewQueueItem(reviewLocale, skipIds);
+
+/* Source pane: prefer the en translation row, fall back to upstream desc. */
+let source: { summary: string; description: string; plainExplanation: string; locale: string } | null = null;
+if (item) {
+  const [enRow] = await db.select({
+    summary: schema.packageTranslation.summary,
+    description: schema.packageTranslation.description,
+    plainExplanation: schema.packageTranslation.plainExplanation,
+  }).from(schema.packageTranslation)
+    .where(and(
+      eq(schema.packageTranslation.packageId, item.packageId),
+      eq(schema.packageTranslation.locale, 'en'),
+    )).limit(1);
+  const [pkgRow] = await db.select({ rawMetadata: schema.packageTable.rawMetadata })
+    .from(schema.packageTable).where(eq(schema.packageTable.id, item.packageId)).limit(1);
+  const upstreamDesc = (pkgRow?.rawMetadata as { desc?: string } | null)?.desc ?? '';
+  source = {
+    locale: enRow ? 'en' : 'upstream',
+    summary: enRow?.summary ?? upstreamDesc ?? '',
+    description: enRow?.description ?? '',
+    plainExplanation: enRow?.plainExplanation ?? '',
+  };
+}
+
+const nextUrl = item
+  ? `${Astro.url.pathname}?locale=${reviewLocale}&skip=${[...skipIds, item.packageId].join(',')}`
+  : null;
+
+const reviewLocaleOptions = ['pt-br', 'en', 'es', 'de', 'fr', 'it', 'ja', 'zh-cn'];
+const title = isPt ? 'Fila de revisão' : 'Review queue';
+const editorLabels = {
+  summary: dict.admin.summary,
+  description: dict.admin.description,
+  plainExplanation: dict.admin.plainExplanation,
+  source: isPt ? 'Original' : 'Source',
+  target: isPt ? 'Tradução' : 'Translation',
+  saveDraft: isPt ? 'Salvar rascunho' : 'Save draft',
+  saveDraftHint: isPt ? 'Guarda alterações como rascunho.' : 'Stores changes as draft.',
+  markReviewed: isPt ? 'Marcar como revisado' : 'Mark as reviewed',
+  markReviewedHint: isPt ? 'Aprova e vai para o próximo.' : 'Approves and moves to next.',
+  publish: isPt ? 'Publicar oficial' : 'Publish as official',
+  publishHint: isPt ? 'Vai ao ar e segue para o próximo.' : 'Goes live and moves to next.',
+  copyToTarget: isPt ? 'Copiar →' : 'Copy →',
+  empty: isPt ? '(vazio)' : '(empty)',
+  actionOk: dict.admin.actionOk,
+  actionFailed: dict.admin.actionFailed,
+  next: isPt ? 'Próximo' : 'Next',
+  skip: isPt ? 'Pular' : 'Skip',
+  suggest: isPt ? 'Traduzir com IA (DeepSeek)' : 'Translate with AI (DeepSeek)',
+  suggesting: isPt ? 'Traduzindo…' : 'Translating…',
+};
+---
+
+<Base title={title}>
+  <section class="wrap">
+    <div class="container-page">
+      <header class="hdr">
+        <div>
+          <p class="back"><a href={`/${locale}/admin`}>← {isPt ? 'Painel' : 'Dashboard'}</a></p>
+          <h1>{title}</h1>
+        </div>
+        <form method="get" class="filter">
+          <label>
+            <span>{isPt ? 'Idioma' : 'Locale'}</span>
+            <select name="locale">
+              {reviewLocaleOptions.map((l) => (
+                <option value={l} selected={l === reviewLocale}>{l}</option>
+              ))}
+            </select>
+          </label>
+          <button type="submit">OK</button>
+          <span class="count">{total.toLocaleString(locale)} {isPt ? 'rascunhos' : 'drafts'}</span>
+        </form>
+      </header>
+
+      {!item || !source ? (
+        <p class="empty">{isPt ? 'Fila vazia para este idioma. 🎉' : 'Queue empty for this locale. 🎉'}</p>
+      ) : (
+        <article class="card">
+          <header class="cardhdr">
+            <h2><a href={localePath(locale, `/p/${item.slug}`)} target="_blank" rel="noopener">{item.name}</a></h2>
+            <div class="meta">
+              {item.hasDispute && <span class="chip chip-dispute">{isPt ? '⚠ disputa aberta' : '⚠ open dispute'}</span>}
+              <span class="chip">pop {item.popularity.toLocaleString(locale)}</span>
+              {item.translatedBy && <span class="chip">{dict.admin.translatedBy}: {item.translatedBy}</span>}
+              <span class="chip src-chip">{isPt ? 'Origem' : 'Source'}: {source.locale}</span>
+              <span class="chip tgt-chip">{isPt ? 'Alvo' : 'Target'}: {reviewLocale}</span>
+            </div>
+          </header>
+          <TranslationEditor
+            client:load
+            packageId={item.packageId}
+            locale={reviewLocale}
+            canPublish={hasRole(role, ['reviewer', 'admin'])}
+            validate={true}
+            canSuggest={true}
+            initial={{
+              summary: item.summary ?? '',
+              description: item.description ?? '',
+              plainExplanation: item.plainExplanation ?? '',
+            }}
+            source={source}
+            labels={editorLabels}
+            nextUrl={nextUrl}
+          />
+        </article>
+      )}
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  .hdr { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: var(--space-4); margin-bottom: var(--space-6); }
+  .back { margin: 0 0 var(--space-2); font-family: var(--font-mono); font-size: 0.78rem; }
+  .back a { color: var(--color-forest); text-decoration: none; }
+  h1 { margin: 0; }
+  h2 { margin: 0; font-size: 1.25rem; }
+  h2 a { color: inherit; text-decoration: none; }
+  h2 a:hover { text-decoration: underline; }
+  .filter { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; }
+  .filter label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--color-fg-muted); }
+  .filter select { padding: 0.45rem 0.6rem; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); color: var(--color-fg); }
+  .filter button { padding: 0.5rem 1rem; border: none; border-radius: var(--radius-full); background: var(--color-forest); color: white; font-weight: 600; cursor: pointer; }
+  .count { font-size: var(--text-sm); color: var(--color-fg-muted); align-self: center; }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); display: grid; gap: var(--space-5); }
+  .cardhdr { display: grid; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+  .meta { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .chip { font-size: 0.75rem; padding: 0.15rem 0.55rem; border-radius: var(--radius-full); background: var(--color-stone-100); color: var(--color-fg-muted); }
+  .chip-dispute { background: color-mix(in srgb, var(--color-terracotta) 16%, transparent); color: var(--color-terracotta-hover); font-weight: 600; }
+  .src-chip { background: #e8f0fb; color: #1f4d8f; }
+  .tgt-chip { background: #fbeee0; color: #8b5a14; }
+  .empty { color: var(--color-fg-muted); font-size: 1.1rem; }
+</style>

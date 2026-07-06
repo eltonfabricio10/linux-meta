@@ -1,0 +1,308 @@
+---
+import Base from '~/layouts/Base.astro';
+import { getLocaleFromUrl, locales, localePath } from '~/i18n';
+import { db } from '~/lib/db';
+import { sql } from 'drizzle-orm';
+import { getUserRole, hasRole } from '~/lib/roles';
+import { formatRelative, formatAbsolute } from '~/lib/format';
+
+export const prerender = false;
+
+const localeParam = Astro.params.locale;
+if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
+  return new Response(null, { status: 404 });
+}
+const locale = getLocaleFromUrl(Astro.url);
+
+if (!Astro.locals.user) return Astro.redirect(localePath(locale, '/auth/login'));
+const role = await getUserRole(Astro.locals.user.id);
+if (!hasRole(role, ['admin'])) return Astro.redirect(localePath(locale, '/auth/login'));
+
+const dict = (locale === 'pt'
+  ? {
+      title: 'Workers',
+      crumb: 'Admin',
+      cards: {
+        runningNow: 'A correr agora',
+        runs24h: 'Execuções (24h)',
+        errors24h: 'Erros (24h)',
+        items24h: 'Itens processados (24h)',
+      },
+      table: {
+        worker: 'Worker', lastRun: 'Última execução', lastStatus: 'Estado', last5: 'Últimas 5',
+        runs24h: 'Exec. 24h', items24h: 'Itens 24h', errors24h: 'Erros 24h', actions: 'Detalhe',
+      },
+      empty: 'Nenhum worker registou execuções ainda.',
+      view: 'Ver',
+      status: { running: 'a correr', success: 'sucesso', error: 'erro', unknown: 'desconhecido' },
+    }
+  : {
+      title: 'Workers',
+      crumb: 'Admin',
+      cards: {
+        runningNow: 'Running now',
+        runs24h: 'Runs (24h)',
+        errors24h: 'Errors (24h)',
+        items24h: 'Items processed (24h)',
+      },
+      table: {
+        worker: 'Worker', lastRun: 'Last run', lastStatus: 'Status', last5: 'Last 5',
+        runs24h: 'Runs 24h', items24h: 'Items 24h', errors24h: 'Errors 24h', actions: 'Detail',
+      },
+      empty: 'No worker has recorded a run yet.',
+      view: 'View',
+      status: { running: 'running', success: 'success', error: 'error', unknown: 'unknown' },
+    });
+
+const isPt = locale === 'pt';
+
+type SummaryRow = {
+  worker: string;
+  last_run: string | null;
+  last_status: string | null;
+  runs_24h: number;
+  items_24h: number;
+  errors_24h: number;
+  currently_running: number;
+  last5: string[]; // statuses newest-first
+  isStuck: boolean;
+};
+
+type TopRow = {
+  running_now: number;
+  runs_24h: number;
+  errors_24h: number;
+  items_24h: number;
+  [k: string]: unknown;
+};
+
+const topRows = await db.execute<TopRow>(sql`
+  SELECT
+    (SELECT COUNT(*)::int FROM worker_run WHERE status = 'running')                                            AS running_now,
+    (SELECT COUNT(*)::int FROM worker_run WHERE started_at > NOW() - INTERVAL '24 hours')                      AS runs_24h,
+    (SELECT COALESCE(SUM(errors_count), 0)::int FROM worker_run WHERE started_at > NOW() - INTERVAL '24 hours') AS errors_24h,
+    (SELECT COALESCE(SUM(items_processed), 0)::int FROM worker_run WHERE started_at > NOW() - INTERVAL '24 hours') AS items_24h
+`);
+const top = (topRows as unknown as TopRow[])[0] ?? { running_now: 0, runs_24h: 0, errors_24h: 0, items_24h: 0 };
+
+type SummaryRowQ = Omit<SummaryRow, 'last5'> & { [k: string]: unknown };
+const baseRows = await db.execute<SummaryRowQ>(sql`
+  WITH last_run AS (
+    SELECT DISTINCT ON (worker) worker, started_at, status
+    FROM worker_run
+    ORDER BY worker, started_at DESC
+  ),
+  agg24 AS (
+    SELECT worker,
+           COUNT(*)::int                                  AS runs_24h,
+           COALESCE(SUM(items_processed), 0)::int         AS items_24h,
+           COALESCE(SUM(errors_count), 0)::int            AS errors_24h
+    FROM worker_run
+    WHERE started_at > NOW() - INTERVAL '24 hours'
+    GROUP BY worker
+  ),
+  running AS (
+    SELECT worker, COUNT(*)::int AS currently_running
+    FROM worker_run WHERE status = 'running' GROUP BY worker
+  ),
+  workers AS (SELECT DISTINCT worker FROM worker_run)
+  SELECT w.worker,
+         lr.started_at AS last_run,
+         lr.status     AS last_status,
+         COALESCE(a.runs_24h, 0)          AS runs_24h,
+         COALESCE(a.items_24h, 0)         AS items_24h,
+         COALESCE(a.errors_24h, 0)        AS errors_24h,
+         COALESCE(r.currently_running, 0) AS currently_running
+  FROM workers w
+  LEFT JOIN last_run lr USING (worker)
+  LEFT JOIN agg24    a  USING (worker)
+  LEFT JOIN running  r  USING (worker)
+  ORDER BY w.worker
+`);
+const summaries = (baseRows as unknown as Array<Omit<SummaryRow, 'last5'>>);
+
+const last5Rows = await db.execute<{ worker: string; statuses: string[]; [k: string]: unknown }>(sql`
+  SELECT worker, ARRAY_AGG(status ORDER BY started_at DESC) AS statuses
+  FROM (
+    SELECT worker, status, started_at,
+           ROW_NUMBER() OVER (PARTITION BY worker ORDER BY started_at DESC) AS rn
+    FROM worker_run
+  ) t
+  WHERE rn <= 5
+  GROUP BY worker
+`);
+const last5Map = new Map<string, string[]>();
+for (const r of (last5Rows as unknown as Array<{ worker: string; statuses: string[] }>)) {
+  last5Map.set(r.worker, r.statuses);
+}
+
+/* Stuck = currently running longer than 2× its own p95 success duration
+ * (floor 5 min so fast workers aren't flagged on noise). */
+const stuckRows = await db.execute<{ worker: string }>(sql`
+  WITH durations AS (
+    SELECT worker, EXTRACT(EPOCH FROM (finished_at - started_at)) AS dur
+    FROM worker_run WHERE finished_at IS NOT NULL AND status = 'success'
+  ),
+  p95 AS (
+    SELECT worker, percentile_cont(0.95) WITHIN GROUP (ORDER BY dur) AS p95_dur
+    FROM durations GROUP BY worker
+  ),
+  running AS (
+    SELECT worker, EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) AS run_age
+    FROM worker_run WHERE status = 'running' GROUP BY worker
+  )
+  SELECT r.worker FROM running r
+  LEFT JOIN p95 p USING (worker)
+  WHERE (p.p95_dur IS NOT NULL AND r.run_age > GREATEST(p.p95_dur * 2, 300))
+     OR (p.p95_dur IS NULL AND r.run_age > 86400)
+`);
+const stuckSet = new Set((stuckRows as unknown as Array<{ worker: string }>).map((r) => r.worker));
+
+const rows: SummaryRow[] = summaries.map((s) => ({
+  ...s, last5: last5Map.get(s.worker) ?? [], isStuck: stuckSet.has(s.worker),
+}));
+const alerts = rows.filter((r) => r.last_status === 'error' || r.isStuck);
+
+function badgeClass(st: string | null | undefined): string {
+  if (st === 'success') return 'badge badge-success';
+  if (st === 'error')   return 'badge badge-error';
+  if (st === 'running') return 'badge badge-running';
+  return 'badge badge-unknown';
+}
+
+function sparkChar(st: string): string {
+  if (st === 'success') return '✓';
+  if (st === 'error')   return '✗';
+  if (st === 'running') return '∙';
+  return '?';
+}
+
+function sparkClass(st: string): string {
+  if (st === 'success') return 'spark-ok';
+  if (st === 'error')   return 'spark-err';
+  if (st === 'running') return 'spark-run';
+  return 'spark-unk';
+}
+
+function statusLabel(st: string | null | undefined): string {
+  if (st === 'running') return dict.status.running;
+  if (st === 'success') return dict.status.success;
+  if (st === 'error')   return dict.status.error;
+  return dict.status.unknown;
+}
+---
+
+<Base title={dict.title}>
+  <section class="wrap">
+    <div class="container-page">
+      <nav class="crumbs">
+        <a href={localePath(locale, '/admin')}>{dict.crumb}</a>
+        <span>›</span>
+        <span>{dict.title}</span>
+      </nav>
+      <h1>{dict.title}</h1>
+
+      {alerts.length > 0 && (
+        <div class="alert" role="alert">
+          <strong>{isPt ? '⚠ Atenção' : '⚠ Attention'}</strong>
+          {alerts.map((a) => (
+            <a class="achip" href={localePath(locale, `/admin/workers/${a.worker}`)}>
+              {a.worker} · {a.isStuck ? (isPt ? 'travado' : 'stuck') : (isPt ? 'última falhou' : 'last failed')}
+            </a>
+          ))}
+        </div>
+      )}
+
+      <div class="cards">
+        <article class="kpi"><span class="lbl">{dict.cards.runningNow}</span><span class="val">{top.running_now}</span></article>
+        <article class="kpi"><span class="lbl">{dict.cards.runs24h}</span><span class="val">{top.runs_24h}</span></article>
+        <article class="kpi"><span class="lbl">{dict.cards.errors24h}</span><span class="val">{top.errors_24h}</span></article>
+        <article class="kpi"><span class="lbl">{dict.cards.items24h}</span><span class="val">{top.items_24h.toLocaleString(locale)}</span></article>
+      </div>
+
+      <article class="card">
+        {rows.length === 0 ? (
+          <p class="empty">{dict.empty}</p>
+        ) : (
+          <table>
+            <thead><tr>
+              <th>{dict.table.worker}</th>
+              <th>{dict.table.lastRun}</th>
+              <th>{dict.table.lastStatus}</th>
+              <th>{dict.table.last5}</th>
+              <th class="n">{dict.table.runs24h}</th>
+              <th class="n">{dict.table.items24h}</th>
+              <th class="n">{dict.table.errors24h}</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr class={r.isStuck ? 'row-stuck' : r.last_status === 'error' ? 'row-err' : undefined}>
+                  <td><code>{r.worker}</code></td>
+                  <td><time datetime={r.last_run ?? ''} title={formatAbsolute(r.last_run, locale)}>{formatRelative(r.last_run, locale)}</time></td>
+                  <td>
+                    <span class={badgeClass(r.last_status)}>{statusLabel(r.last_status)}</span>
+                    {r.isStuck && <span class="badge badge-error">{isPt ? 'travado' : 'stuck'}</span>}
+                  </td>
+                  <td class="spark">{r.last5.map((s) => (<span class={sparkClass(s)}>{sparkChar(s)}</span>))}</td>
+                  <td class="n">{r.runs_24h}</td>
+                  <td class="n">{r.items_24h.toLocaleString(locale)}</td>
+                  <td class="n">{r.errors_24h}</td>
+                  <td><a class="link" href={localePath(locale, `/admin/workers/${r.worker}`)}>{dict.view} →</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </article>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .wrap { padding-block: var(--space-12); }
+  h1 { margin: 0 0 var(--space-6); }
+  .crumbs { display: flex; gap: var(--space-2); color: var(--color-fg-muted); font-size: 0.85rem; margin-block-end: var(--space-2); }
+  .crumbs a { color: inherit; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); margin-block-end: var(--space-6); }
+  @media (max-width: 900px) { .cards { grid-template-columns: 1fr 1fr; } }
+  .kpi { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
+  .kpi .lbl { font-size: 0.75rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .kpi .val { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--color-navy-900); }
+  .card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); vertical-align: middle; }
+  th { font-size: 0.78rem; color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9em; }
+  .empty { color: var(--color-fg-muted); margin: 0; }
+  .badge { display: inline-block; padding: 0.15em 0.6em; border-radius: 999px; font-size: 0.75rem; font-weight: 600; text-transform: lowercase; }
+  .badge-success { background: #d8efe2; color: #1f6b46; }
+  .badge-error   { background: #fadcdc; color: #8b1f1f; }
+  .badge-running { background: #d3ecec; color: #1d5a5a; }
+  .badge-unknown { background: #e4e4e4; color: #555; }
+  .spark { font-family: var(--font-mono, ui-monospace, monospace); letter-spacing: 0.15em; }
+  .spark-ok  { color: #1f6b46; }
+  .spark-err { color: #8b1f1f; }
+  .spark-run { color: #1d5a5a; }
+  .spark-unk { color: #888; }
+  .link { color: var(--color-navy-900); text-decoration: none; font-weight: 600; }
+  .link:hover { text-decoration: underline; }
+  .alert {
+    display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center;
+    padding: var(--space-3) var(--space-4); margin-block-end: var(--space-6);
+    background: color-mix(in srgb, var(--color-terracotta) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-terracotta) 35%, transparent);
+    border-radius: var(--radius-md); color: var(--color-terracotta-hover); font-size: 0.9rem;
+  }
+  .achip {
+    font-family: var(--font-mono); font-size: 0.78rem;
+    padding: 2px 10px; border-radius: var(--radius-full);
+    background: var(--color-bg-elevated); color: var(--color-terracotta-hover);
+    text-decoration: none; border: 1px solid color-mix(in srgb, var(--color-terracotta) 25%, transparent);
+  }
+  .achip:hover { background: var(--color-paper); }
+  .row-err { background: color-mix(in srgb, var(--color-terracotta) 5%, transparent); }
+  .row-stuck { background: color-mix(in srgb, var(--color-terracotta) 9%, transparent); }
+</style>

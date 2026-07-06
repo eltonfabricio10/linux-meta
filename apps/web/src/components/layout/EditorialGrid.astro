@@ -1,0 +1,58 @@
+---
+interface Props { gap?: 'sm' | 'md' | 'lg' }
+const { gap = 'md' } = Astro.props;
+const gapMap: Record<string, string> = {
+  sm: 'var(--space-4)',
+  md: 'var(--space-8)',
+  lg: 'var(--space-12)',
+};
+---
+<div class="editorial-grid" style={`--eg-gap: ${gapMap[gap]}`}>
+  <slot />
+</div>
+<style>
+  .editorial-grid {
+    display: grid;
+    grid-template-columns:
+      [page-start marg-start] minmax(0, 14rem)
+      [main-start] minmax(0, 44rem)
+      [main-end] minmax(0, 14rem)
+      [marg-end page-end];
+    column-gap: var(--eg-gap);
+    margin-inline: auto;
+    max-inline-size: 78rem;
+    padding-inline: var(--space-6);
+  }
+  .editorial-grid :global(.eg-main) {
+    grid-column: main;
+  }
+  .editorial-grid :global(.eg-margin-start) {
+    grid-column: marg-start / main-start;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-ink-muted);
+    padding-block-start: 0.6em;
+  }
+  .editorial-grid :global(.eg-margin-end) {
+    grid-column: main-end / marg-end;
+  }
+  .editorial-grid :global(.eg-full) {
+    grid-column: page;
+  }
+  @media (max-width: 960px) {
+    .editorial-grid {
+      grid-template-columns: minmax(0, 1fr);
+      padding-inline: var(--space-4);
+    }
+    .editorial-grid :global(.eg-main),
+    .editorial-grid :global(.eg-margin-start),
+    .editorial-grid :global(.eg-margin-end),
+    .editorial-grid :global(.eg-full) {
+      grid-column: 1;
+    }
+    .editorial-grid :global(.eg-margin-start),
+    .editorial-grid :global(.eg-margin-end) {
+      padding-block-start: 0;
+    }
+  }
+</style>
