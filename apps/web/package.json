@@ -15,7 +15,7 @@
     "i18n:check": "node scripts/i18n-validate.mjs"
   },
   "dependencies": {
-    "@astrojs/node": "^10.1.1",
+    "@astrojs/node": "^11.0.2",
     "@astrojs/preact": "^5.1.3",
     "@better-auth/drizzle-adapter": "^1.6.11",
     "@linux-meta/db": "workspace:*",
