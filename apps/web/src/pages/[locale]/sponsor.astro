@@ -10,6 +10,10 @@ if (!localeParam || !(locales as readonly string[]).includes(localeParam)) {
 const locale = getLocaleFromUrl(Astro.url);
 void t(locale);
 const m = meta(locale).sponsor;
+
+const repoUrl = 'https://github.com/eltonfabricio10/linux-meta';
+const fundingIssueUrl = `${repoUrl}/issues/new?labels=funding`;
+const sponsorUrl = 'https://github.com/sponsors/eltonfabricio10';
 ---
 
 <Base title={m.title} description={m.intro}>
@@ -18,23 +22,28 @@ const m = meta(locale).sponsor;
       <h1>{m.title}</h1>
       <p class="lead">{m.intro}</p>
 
-      <article class="block">
-        <h2>{m.soonTitle}</h2>
-        <p>{m.soonBody}</p>
+      <article class="block highlight">
+        <h2>{m.supportTitle}</h2>
+        <p>{m.supportBody}</p>
+        <p>
+          <a class="btn" href={sponsorUrl} rel="noopener external" target="_blank">
+            {m.ctaSponsor} <span aria-hidden="true">↗</span>
+          </a>
+        </p>
       </article>
 
-      <article class="block highlight">
+      <article class="block">
+        <h2>{m.howTitle}</h2>
+        <p>{m.howBody}</p>
+      </article>
+
+      <article class="block">
         <h2>{m.interestTitle}</h2>
         <p>{m.interestBody}</p>
         <p>
-          <a class="btn" href="https://github.com" rel="noopener external" data-disabled-link>
+          <a class="link" href={fundingIssueUrl} rel="noopener external" target="_blank">
             {m.ctaIssue} <span aria-hidden="true">↗</span>
           </a>
-          <small class="hint">
-            {locale === 'pt'
-              ? 'Link ativado quando o repositório for tornado público.'
-              : 'Link enabled once the repository is made public.'}
-          </small>
         </p>
       </article>
     </div>
@@ -61,8 +70,9 @@ const m = meta(locale).sponsor;
     color: #fff;
     text-decoration: none;
     font-weight: 600;
-    pointer-events: none;
-    opacity: 0.6;
+    transition: opacity 0.15s ease;
   }
-  .hint { display: block; margin-block-start: var(--space-3); font-size: var(--text-sm); color: var(--color-fg-muted); font-style: italic; }
+  .btn:hover { opacity: 0.85; }
+  .link { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .link:hover { text-decoration-thickness: 2px; }
 </style>

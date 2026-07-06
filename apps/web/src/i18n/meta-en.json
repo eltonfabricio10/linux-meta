@@ -32,11 +32,14 @@
   },
   "sponsor": {
     "title": "Support the project",
-    "intro": "Financial structure still being set up. We do not accept donations until Open Collective / GitHub Sponsors is configured with a public accountability channel.",
-    "soonTitle": "Coming",
-    "soonBody": "Planned setup: Open Collective with full revenue/expense transparency, or GitHub Sponsors linked to a semi-annual report. No tiers, no sponsor benefits beyond optional public mention.",
-    "interestTitle": "Express interest",
-    "interestBody": "If you or your organization wants to support once the channel is ready: open an issue on GitHub with the `funding` tag or watch the home page for an announcement.",
+    "intro": "You can now support linux-meta through GitHub Sponsors. The commitment stays the same: transparency, no tiers, and no benefits beyond an optional public mention.",
+    "supportTitle": "Support now",
+    "supportBody": "One-time or recurring contributions through GitHub Sponsors help cover infrastructure (server, domain) and the time spent curating the data.",
+    "ctaSponsor": "Sponsor on GitHub",
+    "howTitle": "How it works",
+    "howBody": "No tiers and no benefits that create paid priority — support does not buy influence over the data or moderation. The only return is an optional public mention. A revenue and expense report will be published periodically.",
+    "interestTitle": "Institutional support",
+    "interestBody": "If you or your organization wants to arrange another form of support, open an issue on GitHub with the `funding` tag.",
     "ctaIssue": "Open issue on GitHub"
   },
   "transparency": {

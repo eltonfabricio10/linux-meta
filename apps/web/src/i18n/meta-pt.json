@@ -32,11 +32,14 @@
   },
   "sponsor": {
     "title": "Apoiar o projeto",
-    "intro": "Estrutura financeira ainda em construção. Não recebemos doações enquanto Open Collective / GitHub Sponsors não estiverem configurados com canal público de prestação de contas.",
-    "soonTitle": "Em breve",
-    "soonBody": "Configuração prevista: Open Collective com transparência total de receita e despesa, ou GitHub Sponsors com link para relatório semestral. Sem tiers, sem benefícios para patrocinador além de menção pública opcional.",
-    "interestTitle": "Manifeste interesse",
-    "interestBody": "Se você ou sua organização quer apoiar quando o canal estiver pronto: abra uma issue no GitHub com a tag `funding` ou aguarde anúncio na página inicial.",
+    "intro": "Agora você pode apoiar o linux-meta pelo GitHub Sponsors. O compromisso continua o mesmo: transparência, sem tiers e sem benefícios além de menção pública opcional.",
+    "supportTitle": "Apoie agora",
+    "supportBody": "Contribuições únicas ou recorrentes pelo GitHub Sponsors ajudam a cobrir a infraestrutura (servidor, domínio) e o tempo de curadoria dos dados.",
+    "ctaSponsor": "Apoiar via GitHub Sponsors",
+    "howTitle": "Como funciona",
+    "howBody": "Sem tiers e sem benefícios que criem prioridade paga — o apoio não compra influência sobre os dados nem sobre a moderação. A única contrapartida é menção pública opcional. A prestação de contas de receita e despesa será publicada periodicamente.",
+    "interestTitle": "Apoio institucional",
+    "interestBody": "Se você ou sua organização quer combinar outra forma de apoio, abra uma issue no GitHub com a tag `funding`.",
     "ctaIssue": "Abrir issue no GitHub"
   },
   "transparency": {
