@@ -19,7 +19,10 @@ export type SearchHit = {
   sources: string[]; // all distros where this canonical exists
 };
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434';
+// Semantic search is opt-in: it runs only when OLLAMA_URL is configured.
+// With no Ollama service (e.g. to save RAM on a shared host), leave it unset
+// and search goes straight to trigram — no failed fetch, no error logs.
+const OLLAMA_URL = process.env.OLLAMA_URL ?? '';
 const EMBED_MODEL = process.env.EMBED_MODEL ?? 'nomic-embed-text';
 const EMBED_LOCALE = process.env.EMBED_LOCALE ?? 'en';
 
@@ -48,6 +51,10 @@ export async function searchPackagesSemantic(
 ): Promise<SemanticSearchResult> {
   const q = query.trim();
   if (q.length === 0) return { hits: [], outcome: 'semantic' };
+  // No embeddings backend configured → skip straight to text search.
+  if (!OLLAMA_URL) {
+    return { hits: await searchPackages(q, limit), outcome: 'fallback-trgm' };
+  }
   try {
     const vec = await embedQuery(q);
     const lit = `[${vec.join(',')}]`;

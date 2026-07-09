@@ -8,7 +8,7 @@ Migração do linux-meta da Oracle Micro (1 GB, CPU steal) para o VPS pago ICP C
 | **Specs** | 4 vCPU AMD EPYC x86_64, 6 GB RAM, 100 GB NVMe |
 | **SO** | Ubuntu (acesso root) |
 | **Domínio** | `linux-meta.duckdns.org` (mesmo de antes; só reaponta o A record) |
-| **Busca semântica** | **LIGADA** — Ollama + `nomic-embed-text` (havia RAM só agora) |
+| **Busca semântica** | **DESLIGADA** — Ollama removido (host compartilhado); busca por texto (trigram). Ver "Busca semântica" abaixo. |
 | **Painel** | iContainer (1Panel-like), dashboard em `https://184.107.178.66:2090` |
 | **Front / TLS** | **OpenResty do painel** faz TLS + reverse-proxy → `127.0.0.1:4400` |
 
@@ -19,7 +19,16 @@ Migração do linux-meta da Oracle Micro (1 GB, CPU steal) para o VPS pago ICP C
 > OpenResty dele. Em vez de brigar por elas, o OpenResty do painel é o front
 > door: termina o TLS (SSL incluso do painel) e faz reverse-proxy para o
 > container web publicado em `127.0.0.1:4400`. Por isso o compose **não** tem
-> Caddy — só postgres + ollama + web.
+> Caddy — só postgres + web.
+
+> **Busca semântica (Ollama) removida.** O VPS é compartilhado com outros
+> projetos, então o Ollama foi retirado do compose para poupar recursos. O app
+> detecta a ausência de `OLLAMA_URL` e usa busca por texto (trigram) — sem
+> chamadas falhas nem logs de erro. Os embeddings continuam guardados no
+> Postgres (`package_embedding`), então dá pra reativar: adicionar de volta um
+> serviço `ollama`, definir `OLLAMA_URL=http://ollama:11434` no `.env.prod` e
+> (se preciso) rodar `workers/embed-backfill.mjs`. Os passos de Ollama/backfill
+> abaixo só valem se você optar por reativar.
 
 ---
 
@@ -194,11 +203,10 @@ termine a instância Oracle. Guarde o último dump antes.
 |---|---|---|
 | postgres | 1.5 g | shared_buffers 512 MB |
 | web (Node) | 1.0 g | heap cap 768 MB |
-| ollama | 2.0 g | pico no backfill; leve em query |
-| **soma** | **~4.5 g** | ~1.5 g p/ o SO + OpenResty do painel + swap 2 GB |
+| **soma** | **~2.5 g** | tetos, não reservas; host é compartilhado com outros projetos |
 
-> TLS/proxy ficam no OpenResty do painel (fora do compose), então não há Caddy
-> consumindo RAM aqui.
+> TLS/proxy ficam no OpenResty do painel (fora do compose), e o Ollama foi
+> removido — então nem Caddy nem Ollama consomem RAM aqui.
 
 ## Armadilhas do painel iContainer (SSL)
 
