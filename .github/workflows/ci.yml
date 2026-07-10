@@ -30,7 +30,7 @@ jobs:
           run_install: false
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -81,7 +81,7 @@ jobs:
       # reads the lockfile), so there's no store to cache and the post-step
       # would error on a missing path.
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
