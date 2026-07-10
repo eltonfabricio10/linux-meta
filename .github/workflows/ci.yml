@@ -77,11 +77,13 @@ jobs:
           version: 11.2.2
           run_install: false
 
+      # No `cache: pnpm` here: this job doesn't install deps (just `pnpm audit`
+      # reads the lockfile), so there's no store to cache and the post-step
+      # would error on a missing path.
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Audit high-severity vulnerabilities (warn)
         shell: bash
