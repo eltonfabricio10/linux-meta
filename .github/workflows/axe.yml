@@ -1,10 +1,10 @@
 name: Axe a11y
 
+# Manual-only: this boots the app against a populated DB, but there is no seed
+# fixture in the repo (data comes from a private dump), so it can't pass on a
+# plain push. Re-enable push/pull_request once a CI seed exists.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

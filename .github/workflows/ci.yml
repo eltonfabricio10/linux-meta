@@ -14,32 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build, type-check, e2e smoke
+  build-and-check:
+    name: Build & type-check
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: linuxmeta
-          POSTGRES_USER: linuxmeta
-          POSTGRES_PASSWORD: linuxmeta
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U linuxmeta -d linuxmeta"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgres://linuxmeta:linuxmeta@localhost:5432/linuxmeta
-      POSTGRES_DB: linuxmeta
-      POSTGRES_USER: linuxmeta
-      POSTGRES_PASSWORD: linuxmeta
-      CI: "true"
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -79,22 +57,10 @@ jobs:
       - name: Astro type-check (fail on errors)
         run: pnpm --filter @linux-meta/web exec astro check
 
-      - name: Install Playwright browsers
-        run: pnpm --filter @linux-meta/e2e exec playwright install --with-deps chromium
-
-      - name: Playwright e2e smoke
-        run: pnpm --filter @linux-meta/e2e exec playwright test --reporter=line
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: |
-            e2e/playwright-report
-            e2e/test-results
-          if-no-files-found: ignore
-          retention-days: 7
+  # NOTE: e2e (Playwright), Axe and Lighthouse are NOT run here. They boot the
+  # app against a populated database, and there is no seed fixture in the repo
+  # (real data comes from a private dump). Those workflows are kept as
+  # manual-only (workflow_dispatch) until a CI seed exists. See docs/DEPLOY-ICP.md.
 
   audit:
     name: pnpm audit (warn only)
