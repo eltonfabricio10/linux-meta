@@ -27,6 +27,6 @@
     "db:import": "bash scripts/db-import.sh"
   },
   "devDependencies": {
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.10"
   }
 }
